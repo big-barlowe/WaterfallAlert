@@ -37,6 +37,28 @@ A *group* is a plain folder. It has no check of its own and never blocks what's 
 - **Edit button** (above the monitor list): drag a monitor onto another to move it underneath. Hold <kbd>Alt</kbd>/<kbd>⌥</kbd> while dropping to **add** that monitor as an extra parent instead of moving. Drop it on *Drop here to move to the top level* to make it top level. The row buttons are: **+** (add a monitor beneath), **⇅** (move, which also works on touch screens), **✎** (settings) and **⨯** (detach from this parent).
 - **Monitor settings → Hierarchy**: the *Parent monitors* and *Dependent monitors* lists. They stay in sync: adding a parent here lists this monitor as that parent's dependent. Any choice that would create a loop is hidden.
 
+## The Falls
+
+The dashboard diagram shows the whole hierarchy as streams: water flows from healthy monitors, runs dry below a monitor that is down, and goes still below blocked or paused ones.
+
+- **Click a monitor** to trace it: the diagram shows only what it depends on (upstream) and what depends on it (downstream). Click it again, press <kbd>Esc</kbd>, click empty space or use **Show all** to see everything. **Trace in Falls** on a monitor's page does the same.
+- **The expand button** (top-right corner of a monitor) opens a details panel with its status, response times, heartbeats and its full upstream and downstream lists. Click a monitor in those lists to trace that one instead.
+
+## Icons
+
+Choose a monitor's icon under **Settings → General → Icon**:
+
+| Option | |
+|---|---|
+| Automatic (default) | HTTP monitors use the website's favicon. Groups show a folder. Other types have no icon. |
+| Built-in | A set of simple icons for routers, servers, NAS boxes, databases, containers and more. |
+| Emoji | Any emoji. |
+| Image URL | Any image, e.g. from the [dashboard-icons](https://github.com/homarr-labs/dashboard-icons) project. |
+| Upload | PNG, JPEG, GIF, WebP, SVG or ICO, shrunk to 128 px. |
+| None | No icon. |
+
+Favicons and image URLs are downloaded by the add-on and stored in its database, so the browser never has to reach the site (useful when Home Assistant is served over HTTPS and the site is plain HTTP, or only reachable from the add-on). The add-on checks for a favicon in the page's `<link rel="icon">` tags, then the site's home page, then `/favicon.ico`. Icons are refreshed weekly; saving the monitor fetches its icon again straight away.
+
 ## Notifications
 
 Add channels under **Notifications**. Each monitor chooses which channels it uses. Channels marked *default* are pre-selected for new monitors. Alerts go to the channels of the **monitor that is actually down**, i.e. the top of the affected branch.

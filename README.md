@@ -31,7 +31,8 @@ Other affected monitors (3):
 - **Heartbeat history** like Uptime Kuma: heartbeat bars, a response-time chart (1h–30d), 24h/30d uptime, and an event log. Retention is configurable.
 - **Monitor types:** HTTP(S) (status codes, keyword), TCP port, ping, DNS, Home Assistant entity state, push (heartbeat URL), and group (a plain folder).
 - **Notifications:** Home Assistant notify services, ntfy, Discord, Slack, Telegram, Pushover, Gotify, generic JSON webhook, email (SMTP).
-- **Water-themed UI.** A live "falls" diagram where healthy streams flow with a blue glow, streams below a failure run dry, and blocked branches go still.
+- **Water-themed UI.** A live "falls" diagram where healthy streams flow with a blue glow, streams below a failure run dry, and blocked branches go still. Click a monitor to trace just its upstream and downstream, and expand it for a details panel.
+- **Icons.** HTTP monitors show their site's favicon automatically. You can also choose a built-in icon, an emoji, an image URL or upload your own.
 
 ## Install as a Home Assistant add-on
 

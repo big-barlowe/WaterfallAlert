@@ -2,6 +2,7 @@ import { Graph } from './graph.js';
 import { MONITOR_TYPES } from './checkers/index.js';
 import { deliver, providerCatalog, providers } from './notifier.js';
 import { config, isAddon } from './config.js';
+import { validateIconSpec, decodeDataUrl } from './icons.js';
 import fs from 'node:fs';
 
 const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -12,6 +13,23 @@ export class HttpError extends Error {
     this.status = status;
   }
 }
+
+// A non-JSON response (icon images).
+export class RawResponse {
+  constructor(type, body, headers = {}) {
+    this.type = type;
+    this.body = body;
+    this.headers = headers;
+  }
+}
+
+const badRequest = (fn) => {
+  try {
+    return fn();
+  } catch (err) {
+    throw new HttpError(400, err.message);
+  }
+};
 
 const int = (v, def, min, max) => {
   const n = v === undefined || v === null || v === '' ? def : Math.round(Number(v));
@@ -40,11 +58,12 @@ function normalizeMonitor(body, existing) {
     parentMode: (body.parentMode ?? base.parentMode) === 'any' ? 'any' : 'all',
     active: body.active ?? base.active ?? true,
     description: String(body.description ?? base.description ?? ''),
+    icon: body.icon === undefined ? base.icon ?? '' : badRequest(() => validateIconSpec(body.icon)),
   };
 }
 
-// Builds the router. `ctx` = { store, engine }.
-export function createApi({ store, engine }) {
+// Builds the router. `ctx` = { store, engine, icons }.
+export function createApi({ store, engine, icons }) {
   const routes = [];
   const route = (method, pattern, handler) => {
     const keys = [];
@@ -75,6 +94,16 @@ export function createApi({ store, engine }) {
     if (childIds) store.setChildren(id, childIds);
   };
 
+  // An uploaded image arrives with the monitor as a data URL in `iconData`.
+  const iconUpload = (body, data, id) => {
+    if (data.icon !== 'upload') return null;
+    if (body.iconData) return badRequest(() => decodeDataUrl(body.iconData));
+    if (id == null || !icons.hasUpload(id)) throw new HttpError(400, 'Choose an image to upload for the icon');
+    return null;
+  };
+
+  const iconsChanged = (id) => icons.sync(store.listMonitors(), id == null ? [] : [id]);
+
   const monitorDetail = (m) => ({
     ...m,
     parentIds: engine.graph.parentsOf(m.id),
@@ -86,7 +115,9 @@ export function createApi({ store, engine }) {
 
   route('GET', '/api/state', ({ query }) => {
     if (query.v && Number(query.v) === engine.version) return { version: engine.version, unchanged: true };
-    return engine.snapshot();
+    const snap = engine.snapshot();
+    for (const m of snap.monitors) m.icon = icons.describe(engine.monitors.get(m.id));
+    return snap;
   });
 
   route('GET', '/api/events', () => store.recentEvents(50));
@@ -97,6 +128,7 @@ export function createApi({ store, engine }) {
 
   route('POST', '/api/monitors', ({ body }) => {
     const data = normalizeMonitor(body);
+    const upload = iconUpload(body, data, null);
     const parentIds = idList(body.parentIds) ?? [];
     const childIds = idList(body.childIds) ?? [];
     const id = store.tx(() => {
@@ -106,13 +138,16 @@ export function createApi({ store, engine }) {
       store.setMonitorNotifications(newId, notif);
       return newId;
     });
+    if (upload) icons.saveUpload(id, upload);
     engine.reload([id, ...childIds]);
+    iconsChanged(id);
     return monitorDetail(store.getMonitor(id));
   });
 
   route('PUT', '/api/monitors/:id', ({ params, body }) => {
     const existing = monitorOr404(params.id);
     const data = normalizeMonitor(body, existing);
+    const upload = iconUpload(body, data, existing.id);
     const parentIds = idList(body.parentIds);
     const childIds = idList(body.childIds);
     const oldChildren = engine.graph.childrenOf(existing.id);
@@ -122,7 +157,9 @@ export function createApi({ store, engine }) {
       const notif = idList(body.notificationIds);
       if (notif) store.setMonitorNotifications(existing.id, notif);
     });
+    if (upload) icons.saveUpload(existing.id, upload);
     engine.reload([existing.id, ...oldChildren, ...(childIds ?? [])]);
+    iconsChanged(existing.id);
     return monitorDetail(store.getMonitor(existing.id));
   });
 
@@ -131,6 +168,7 @@ export function createApi({ store, engine }) {
     const orphans = engine.graph.childrenOf(m.id);
     store.deleteMonitor(m.id);
     engine.reload(orphans);
+    iconsChanged(null);
     return { ok: true };
   });
 
@@ -179,6 +217,18 @@ export function createApi({ store, engine }) {
     const m = monitorOr404(params.id);
     const hours = int(query.hours, 24, 1, 24 * 90);
     return store.heartbeatsSince(m.id, Date.now() - hours * 3600000);
+  });
+
+  // Images come from arbitrary sites, so make sure an SVG can never run
+  // script in this origin, even if someone opens the URL directly.
+  route('GET', '/api/monitors/:id/icon', ({ params }) => {
+    const icon = store.getIcon(monitorOr404(params.id).id);
+    if (!icon) throw new HttpError(404, 'No icon');
+    return new RawResponse(icon.mime, icon.data, {
+      'Cache-Control': 'private, max-age=604800',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      'X-Content-Type-Options': 'nosniff',
+    });
   });
 
   route('GET', '/api/monitors/:id/events', ({ params }) => store.importantHeartbeats(monitorOr404(params.id).id, 50));

@@ -1,5 +1,6 @@
 import { api, h, toast, modal, confirmDialog, storage, store, STATUS_LABEL, BEAT_STATUS, TYPE_LABEL, fmtTime, fmtAgo, fmtPct, fmtMs, fill } from './util.js';
-import { FlowView } from './flow.js';
+import { FlowView, lineage } from './flow.js';
+import { iconEl } from './icons.js';
 import { heartbeatBar, responseChart } from './chart.js';
 import { renderMonitorForm, renderNotificationForm } from './forms.js';
 
@@ -14,6 +15,8 @@ const ui = {
   route: null,
   chartHours: storage('chartHours', 24),
   drag: null,
+  focus: null, // falls diagram: monitor whose upstream/downstream is shown
+  info: null,  // falls diagram: monitor whose details panel is open
 };
 
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true });
@@ -110,6 +113,7 @@ function renderTree() {
     return;
   }
 
+  ui.anyIcons = state.monitors.some((m) => m.icon);
   const roots = state.monitors.filter((m) => !m.parents.length).sort(byName);
   fill(host, [
     ui.editMode ? h('div', {
@@ -192,7 +196,10 @@ function row(m, parentId, path, depth, hasKids) {
   }, hasKids ? (open ? '▾' : '▸') : ''),
   ui.editMode ? h('span', { class: 'grip', 'aria-hidden': 'true' }, '⠿') : null,
   h('a', { class: 'row-main', href: `#/monitor/${m.id}`, draggable: 'false' },
-    h('span', { class: `dot ${m.status}`, title: STATUS_LABEL[m.status] }),
+    // With icons, the status dot sits on the icon's corner to save width.
+    ui.anyIcons
+      ? h('span', { class: `row-icon${m.icon ? '' : ' bare'}` }, iconEl(m.icon, 18), h('span', { class: `dot ${m.status}`, title: STATUS_LABEL[m.status] }))
+      : h('span', { class: `dot ${m.status}`, title: STATUS_LABEL[m.status] }),
     h('span', { class: 'row-name' }, m.name),
     otherParents.length ? h('span', { class: 'also', title: `Also under: ${otherParents.join(', ')}` }, '⑂') : null),
   ui.editMode
@@ -270,18 +277,19 @@ async function renderDashboard(isUpdate = false) {
   const main = $('#main');
   if (!isUpdate || !main.querySelector('.dashboard')) {
     const flowBox = h('div', { class: 'flow-scroll' });
-    flow = new FlowView(flowBox, (id) => go(`#/monitor/${id}`));
+    flow = new FlowView(flowBox, { onSelect: selectNode, onExpand: expandNode, onClear: () => setFocus(null, null) });
     fill(main, h('div', { class: 'dashboard' },
       h('div', { class: 'stat-row', id: 'dash-stats' }),
       h('section', { class: 'card falls' },
         h('div', { class: 'card-head' },
-          h('h2', null, 'The Falls'),
+          h('div', { class: 'falls-title' }, h('h2', null, 'The Falls'), h('div', { id: 'flow-focus', class: 'flow-focus', 'aria-live': 'polite' })),
           h('div', { class: 'legend' },
             h('span', { class: 'key flow' }, 'Flowing'),
             h('span', { class: 'key dry' }, 'Dry — source down'),
             h('span', { class: 'key still' }, 'Still — blocked/paused'))),
-        flowBox,
-        h('div', { id: 'flow-empty' })),
+        h('div', { id: 'falls-body', class: 'falls-body' },
+          h('div', { class: 'falls-diagram' }, flowBox, h('div', { id: 'flow-empty' })),
+          h('aside', { id: 'flow-info', class: 'flow-info', 'aria-label': 'Monitor details', hidden: true }))),
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, 'Recent events')),
         h('div', { id: 'dash-events' }))));
@@ -292,7 +300,11 @@ async function renderDashboard(isUpdate = false) {
       h('div', { class: 'stat-num' }, c[k]),
       h('div', { class: 'stat-label' }, h('span', { class: `dot ${k}` }), STATUS_LABEL[k]))));
 
-  flow.render(state.monitors);
+  if (!state.byId.has(ui.focus)) ui.focus = null;
+  if (!state.byId.has(ui.info)) ui.info = null;
+  flow.render(state.monitors, ui.focus);
+  renderFocusBar();
+  renderInfo();
   fill($('#flow-empty'), state.loaded && !state.monitors.length
     ? h('div', { class: 'empty' },
       h('p', null, 'Start at the top: add the thing everything else depends on (your WAN, a router), then add monitors beneath it.'),
@@ -304,6 +316,99 @@ async function renderDashboard(isUpdate = false) {
   }
   const events = eventsCache.list.filter((e) => e.status !== 4).slice(0, 15);
   fill($('#dash-events'), events.length ? eventTable(events, true) : h('p', { class: 'muted' }, 'No events yet.'));
+}
+
+// Clicking a node traces its lineage; clicking it again shows everything.
+function selectNode(id) {
+  if (ui.focus === id) setFocus(null, null);
+  else setFocus(id, ui.info == null ? null : id);
+}
+
+function expandNode(id) {
+  setFocus(id, ui.info === id ? null : id);
+}
+
+function setFocus(focus, info) {
+  ui.focus = focus;
+  ui.info = info;
+  // Keep the URL shareable without triggering a re-route (which would
+  // rebuild the diagram and skip the animation).
+  const qs = new URLSearchParams();
+  if (focus != null) qs.set('focus', focus);
+  if (info != null) qs.set('info', info);
+  history.replaceState(null, '', `#/${qs.size ? `?${qs}` : ''}`);
+  renderDashboard(true);
+  if (info != null && matchMedia('(max-width: 1100px)').matches) $('#flow-info')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderFocusBar() {
+  const f = state.byId.get(ui.focus);
+  if (!f) {
+    fill($('#flow-focus'), state.monitors.length ? h('span', { class: 'muted small' }, 'Click a monitor to trace what it depends on') : null);
+    return;
+  }
+  const rel = lineage(state.monitors, f.id);
+  fill($('#flow-focus'),
+    h('span', { class: 'focus-chip' },
+      h('span', { class: `dot ${f.status}` }),
+      h('span', null, f.name),
+      h('span', { class: 'muted' }, ` · ${rel.up.size} upstream · ${rel.down.size} downstream`)),
+    h('button', { class: 'btn small', onclick: () => setFocus(null, null) }, 'Show all'));
+}
+
+function renderInfo() {
+  const box = $('#flow-info');
+  const m = state.byId.get(ui.info);
+  $('#falls-body').classList.toggle('with-info', Boolean(m));
+  box.hidden = !m;
+  if (!m) return fill(box);
+
+  const rel = lineage(state.monitors, m.id);
+  // closest first
+  const ordered = (dist) => [...dist].map(([id, d]) => [state.byId.get(id), d]).filter(([x]) => x)
+    .sort((a, b) => a[1] - b[1] || byName(a[0], b[0])).map(([x]) => x);
+  const chips = (list, empty) => list.length
+    ? h('div', { class: 'chips' }, list.map((x) => h('button', {
+      type: 'button',
+      class: 'chip link',
+      title: `Focus on ${x.name}`,
+      onclick: () => setFocus(x.id, x.id),
+    }, h('span', { class: `dot ${x.status}` }), iconEl(x.icon, 14), x.name)))
+    : h('p', { class: 'muted small' }, empty);
+  const up = ordered(rel.up);
+  const down = ordered(rel.down);
+  const stat = (label, value) => h('div', null, h('dt', null, label), h('dd', null, value));
+
+  fill(box,
+    h('div', { class: 'info-head' },
+      iconEl(m.icon, 30),
+      h('div', { class: 'info-title' },
+        h('h3', null, m.name),
+        h('div', { class: 'target' }, TYPE_LABEL[m.type], m.target && m.type !== 'push' ? ` · ${m.target}` : '')),
+      h('button', { class: 'icon-btn', 'aria-label': 'Close details', title: 'Close', onclick: () => setFocus(ui.focus, null) }, '×')),
+    h('div', { class: 'info-status' },
+      h('span', { class: `badge ${m.status}` }, STATUS_LABEL[m.status]),
+      m.type === 'group' ? null : h('span', { class: 'muted small' }, `checked ${fmtAgo(m.lastCheck)} · every ${m.interval}s`)),
+    m.msg ? h('p', { class: 'info-msg' }, m.msg) : null,
+    m.description ? h('p', { class: 'muted small' }, m.description) : null,
+    m.type === 'group' ? null : [
+      h('dl', { class: 'info-stats' },
+        stat('Response', fmtMs(m.ping)),
+        stat('Avg · 24h', fmtMs(m.avgPing24)),
+        stat('Uptime · 24h', fmtPct(m.uptime24))),
+      heartbeatBar(m.beats, 30),
+    ],
+    h('div', { class: 'info-rel' },
+      h('h4', null, h('span', { class: 'rel-icon up' }, '↑'), 'Depends on', h('span', { class: 'count' }, up.length)),
+      chips(up, 'Nothing. This is a top-level monitor.'),
+      m.parents.length > 1 ? h('p', { class: 'muted small' }, m.parentMode === 'any' ? 'Blocked only when every parent is down.' : 'Blocked when any parent is down.') : null),
+    h('div', { class: 'info-rel' },
+      h('h4', null, h('span', { class: 'rel-icon down' }, '↓'), 'Feeds', h('span', { class: 'count' }, down.length)),
+      chips(down, 'Nothing depends on this.')),
+    h('div', { class: 'info-actions' },
+      m.type !== 'group' ? h('button', { class: 'btn small', onclick: () => action(`monitors/${m.id}/check`, 'Checked') }, 'Check now') : null,
+      h('a', { class: 'btn small', href: `#/monitor/${m.id}/edit` }, 'Edit'),
+      h('a', { class: 'btn small primary', href: `#/monitor/${m.id}` }, 'Full details →')));
 }
 
 function eventTable(events, withName) {
@@ -349,11 +454,16 @@ async function renderDetail(id, isUpdate = false) {
         h('div', { class: 'crumbs' }, parents.length
           ? parents.map((p, i) => [i ? ' · ' : '', h('a', { href: `#/monitor/${p.id}` }, p.name)]).flat().concat(' ↓')
           : 'Top level'),
-        h('h1', null, m.name, ' ', h('span', { class: `badge big ${m.status}` }, STATUS_LABEL[m.status])),
+        h('h1', null, iconEl(m.icon, 30), m.name, ' ', h('span', { class: `badge big ${m.status}` }, STATUS_LABEL[m.status])),
         h('div', { class: 'target' }, TYPE_LABEL[m.type], m.target && m.type !== 'push' ? ` · ${m.target}` : ''),
         m.description ? h('p', { class: 'muted' }, m.description) : null),
       h('div', { class: 'actions' },
         m.type !== 'group' ? h('button', { class: 'btn', onclick: () => action(`monitors/${id}/check`, 'Checked') }, 'Check now') : null,
+        h('button', {
+          class: 'btn',
+          title: 'Show what this depends on and what depends on it',
+          onclick: () => go(`#/?focus=${id}`),
+        }, 'Trace in Falls'),
         h('button', { class: 'btn', onclick: () => action(`monitors/${id}/${m.active ? 'pause' : 'resume'}`, m.active ? 'Paused' : 'Resumed') }, m.active ? 'Pause' : 'Resume'),
         h('a', { class: 'btn', href: `#/add?parent=${id}` }, '+ Dependent'),
         h('a', { class: 'btn primary', href: `#/monitor/${id}/edit` }, 'Edit'),
@@ -538,7 +648,8 @@ function parseRoute() {
   if (parts[0] === 'alerts') return { name: 'alerts' };
   if (parts[0] === 'notifications') return { name: 'notifications' };
   if (parts[0] === 'settings') return { name: 'settings' };
-  return { name: 'dashboard' };
+  const num = (k) => (params.get(k) ? Number(params.get(k)) : null);
+  return { name: 'dashboard', focus: num('focus'), info: num('info') };
 }
 
 async function route() {
@@ -548,6 +659,10 @@ async function route() {
   document.body.classList.toggle('show-tree', r.name === 'dashboard');
   renderTree();
   window.scrollTo({ top: 0 });
+  if (r.name === 'dashboard') {
+    ui.focus = r.focus;
+    ui.info = r.info;
+  }
   try {
     if (r.name === 'dashboard') await renderDashboard();
     else if (r.name === 'monitor') await renderDetail(r.id);
@@ -572,6 +687,11 @@ $('#search').addEventListener('input', (e) => {
   renderTree();
 });
 window.addEventListener('hashchange', route);
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || ui.route?.name !== 'dashboard' || document.querySelector('.modal-back')) return;
+  if (ui.info != null) setFocus(ui.focus, null);
+  else if (ui.focus != null) setFocus(null, null);
+});
 let resizeTimer;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);

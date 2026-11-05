@@ -74,6 +74,21 @@ const MIGRATIONS = [
     value TEXT NOT NULL
   );
   `,
+  // v2: monitor icons. `icon` is the spec chosen in the UI (see icons.js);
+  // `icons` caches the image bytes for favicons, image URLs and uploads.
+  `
+  ALTER TABLE monitors ADD COLUMN icon TEXT NOT NULL DEFAULT '';
+
+  CREATE TABLE icons (
+    monitor_id INTEGER PRIMARY KEY REFERENCES monitors(id) ON DELETE CASCADE,
+    source     TEXT    NOT NULL,
+    mime       TEXT,
+    data       BLOB,
+    error      TEXT    NOT NULL DEFAULT '',
+    updated_at INTEGER NOT NULL,
+    checked_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -91,6 +106,7 @@ const MONITOR_FIELDS = {
   parentMode: 'parent_mode',
   active: 'active',
   description: 'description',
+  icon: 'icon',
 };
 
 function rowToMonitor(r) {
@@ -107,6 +123,7 @@ function rowToMonitor(r) {
     parentMode: r.parent_mode,
     active: Boolean(r.active),
     description: r.description,
+    icon: r.icon,
     pushToken: r.push_token,
     createdAt: r.created_at,
   };
@@ -187,12 +204,12 @@ export class Store {
     const pushToken = m.type === 'push' ? crypto.randomBytes(12).toString('hex') : null;
     const res = this.q(
       `INSERT INTO monitors (name, type, config, interval, retries, retry_interval, timeout,
-         resend_interval, parent_mode, active, description, push_token, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         resend_interval, parent_mode, active, description, icon, push_token, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       m.name, m.type, JSON.stringify(m.config ?? {}), m.interval, m.retries, m.retryInterval,
       m.timeout, m.resendInterval, m.parentMode, m.active ? 1 : 0, m.description ?? '',
-      pushToken, Date.now()
+      m.icon ?? '', pushToken, Date.now()
     );
     return Number(res.lastInsertRowid);
   }
@@ -245,6 +262,35 @@ export class Store {
   setChildren(id, childIds) {
     this.q('DELETE FROM monitor_edges WHERE parent_id = ?').run(id);
     for (const c of childIds) this.addEdge(id, c);
+  }
+
+  // ---- icons --------------------------------------------------------------
+
+  listIconMeta() {
+    return this.q(
+      `SELECT monitor_id AS monitorId, source, data IS NOT NULL AS hasData,
+              updated_at AS updatedAt, checked_at AS checkedAt FROM icons`
+    ).all().map((r) => ({ ...r, hasData: Boolean(r.hasData) }));
+  }
+
+  getIcon(monitorId) {
+    return this.q('SELECT mime, data FROM icons WHERE monitor_id = ? AND data IS NOT NULL').get(monitorId) ?? null;
+  }
+
+  setIcon(monitorId, i) {
+    this.q(
+      `INSERT INTO icons (monitor_id, source, mime, data, error, updated_at, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(monitor_id) DO UPDATE SET source = excluded.source, mime = excluded.mime, data = excluded.data,
+         error = excluded.error, updated_at = excluded.updated_at, checked_at = excluded.checked_at`
+    ).run(monitorId, i.source, i.mime ?? null, i.data ?? null, i.error ?? '', i.updatedAt, i.checkedAt);
+  }
+
+  markIconChecked(monitorId, checkedAt, error) {
+    this.q('UPDATE icons SET checked_at = ?, error = ? WHERE monitor_id = ?').run(checkedAt, error ?? '', monitorId);
+  }
+
+  deleteIcon(monitorId) {
+    this.q('DELETE FROM icons WHERE monitor_id = ?').run(monitorId);
   }
 
   // ---- heartbeats ---------------------------------------------------------

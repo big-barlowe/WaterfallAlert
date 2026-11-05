@@ -126,6 +126,12 @@ export class Engine {
     for (const id of changed) this.#track(this.refresh(id));
   }
 
+  // Mark UI-visible state as changed without touching any monitor (e.g. an
+  // icon finished downloading).
+  touch() {
+    this.version++;
+  }
+
   // Re-evaluate a monitor now. Groups and paused monitors have no check of
   // their own, so refresh whatever sits underneath them instead.
   async refresh(id, seen = new Set()) {

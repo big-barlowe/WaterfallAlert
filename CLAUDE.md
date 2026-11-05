@@ -18,14 +18,17 @@ waterfall_alert/             the add-on (Supervisor build context)
     src/db.js                node:sqlite Store, migrations (PRAGMA user_version)
     src/checkers/            one function per monitor type -> { ok, ping?, msg }
     src/notifier.js          notification providers + their form field definitions
+    src/icons.js             icon specs, favicon discovery, IconCache (cached images in the `icons` table)
     src/status.js            heartbeat status codes
     public/                  vanilla-JS SPA, no build step
       js/app.js              router, polling, sidebar tree (drag/drop), views
-      js/flow.js             SVG "falls" diagram
+      js/flow.js             SVG "falls" diagram, focus/lineage view, FLIP animation
+      js/icons.js            built-in glyphs, iconEl() (HTML) / iconSvg() (inside the diagram)
       js/chart.js            heartbeat bar + response-time chart
       js/forms.js            monitor + notification forms
       js/util.js             api(), h()/svg()/fill() DOM helpers, formatters
     test/engine.test.js      node:test scenarios for the hierarchy logic
+    test/icons.test.js       favicon discovery and icon cache, with a fake `request`
 ```
 
 ## Commands
@@ -58,6 +61,21 @@ To look at the UI: headless Chrome screenshots work (`--headless=new --virtual-t
 - After any config change the API calls `engine.reload(changedIds)`, which rebuilds the graph and re-evaluates those monitors.
 
 Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are just the reverse view, which is why adding a parent automatically lists the monitor as that parent's dependent. Cycles are rejected in `api.js` (`applyEdges` → `Graph.hasCycle`), and the form hides options that would create one.
+
+## Icons
+
+- A monitor's `icon` column holds a spec: `''` automatic (favicon for HTTP, folder for groups), `none`, `builtin:<name>`, `emoji:<text>`, `url:<url>`, `upload`. Parsing and validation are in `src/icons.js`.
+- `IconCache.sync(monitors, forceIds)` runs after every monitor create/update/delete and every 6h. It drops images nothing wants and fetches missing or stale ones in the background, then calls `engine.touch()` so the UI polls them in.
+- `/api/state` replaces each monitor's spec with a render descriptor from `icons.describe()`: `{kind:'image', src}`, `{kind:'builtin', name}`, `{kind:'emoji', value}` or `null`. `GET api/monitors/:id` still returns the raw spec, which is what the form edits.
+- Images are served from `api/monitors/:id/icon` with a sandboxing CSP, because SVGs come from arbitrary sites and the add-on shares Home Assistant's origin. Keep those headers. Types are sniffed from bytes (`sniffImage`), never from Content-Type.
+- Built-in glyph keys are stored in the database, so never rename one in `public/js/icons.js`. Adding one is fine.
+
+## Falls diagram (flow.js)
+
+- `render(monitors, focusId)`: with a focus, only `lineage()` (ancestors + descendants) is laid out. The structure is rebuilt only when the topology key changes (ids, names, edges, icons, focus); `#paint` updates status classes in place so animations don't restart.
+- On a rebuild, surviving nodes FLIP from their old screen position. They are positioned via the outer `g`'s `transform` attribute and animated via CSS transforms on the inner `.node-inner`, because a CSS transform on the outer one would override the attribute.
+- Focus state lives in `ui.focus`/`ui.info` in app.js and is mirrored into the hash with `history.replaceState`. A real hash change would re-route and rebuild the diagram without the animation.
+- Two glow filters: `#glow` (user space) for streams, since a bounding-box region is zero-wide on a vertical path, and `#glow-box` for elements inside a translated node.
 
 ## Conventions
 

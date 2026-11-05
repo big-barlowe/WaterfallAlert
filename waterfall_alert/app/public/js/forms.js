@@ -1,4 +1,5 @@
 import { api, h, toast, TYPE_LABEL, fill } from './util.js';
+import { GLYPHS, iconEl, glyphPreview } from './icons.js';
 
 const TYPE_FIELDS = {
   group: [],
@@ -69,6 +70,37 @@ function field(f, value, onChange) {
     f.help ? h('small', null, f.help) : null);
 }
 
+const ICON_MODES = [['auto', 'Automatic'], ['builtin', 'Built-in'], ['emoji', 'Emoji'], ['url', 'Image URL'], ['upload', 'Upload'], ['none', 'None']];
+const EMOJI = ['🌐', '📡', '🖥️', '🗄️', '💾', '🐳', '🏠', '🔒', '📷', '💡', '🎬', '🎵', '🖨️', '☁️', '⚡', '🌡️'];
+
+function iconMode(spec) {
+  if (spec === 'none' || spec === 'upload') return spec;
+  const kind = spec.split(':')[0];
+  return ['builtin', 'emoji', 'url'].includes(kind) && spec.includes(':') ? kind : 'auto';
+}
+
+// Uploads are shrunk to at most 128px PNG in the browser. SVGs are drawn at
+// full size since they scale cleanly.
+async function toIconDataUrl(file) {
+  const src = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = src;
+    await img.decode();
+    const w0 = img.naturalWidth || 128;
+    const h0 = img.naturalHeight || 128;
+    const isSvg = file.type === 'image/svg+xml';
+    const scale = isSvg ? 128 / Math.max(w0, h0) : Math.min(1, 128 / Math.max(w0, h0));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(w0 * scale));
+    canvas.height = Math.max(1, Math.round(h0 * scale));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png');
+  } finally {
+    URL.revokeObjectURL(src);
+  }
+}
+
 // Everything reachable downstream of `start` in the edited graph.
 function downstream(childMap, start) {
   const seen = new Set();
@@ -111,6 +143,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
 
   const form = h('form', { class: 'card form', novalidate: true });
   const typeBox = h('div');
+  const iconBox = h('div', { class: 'field icon-field' });
   const hierarchyBox = h('div');
 
   const renderType = () => {
@@ -118,6 +151,120 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       h('p', { class: 'help' }, TYPE_HELP[draft.type]),
       TYPE_FIELDS[draft.type].map((f) => field(f, draft.config[f.key], (v) => { draft.config[f.key] = v; })),
       draft.type === 'push' ? pushInfo() : null);
+  };
+
+  // Icon: remember each mode's value so flipping between modes loses nothing.
+  draft.icon ??= '';
+  const live = id ? state.byId.get(id)?.icon : null; // the icon shown right now
+  let mode = iconMode(draft.icon);
+  const memo = { builtin: 'server', emoji: '', url: '' };
+  if (['builtin', 'emoji', 'url'].includes(mode)) memo[mode] = draft.icon.slice(mode.length + 1);
+
+  const iconSpec = () => (mode === 'auto' ? '' : ['none', 'upload'].includes(mode) ? mode : memo[mode] ? `${mode}:${memo[mode]}` : '');
+
+  const iconPreview = () => {
+    if (mode === 'builtin') return iconEl({ kind: 'builtin', name: memo.builtin }, 30);
+    if (mode === 'emoji') return memo.emoji ? iconEl({ kind: 'emoji', value: memo.emoji }, 30) : null;
+    if (mode === 'url') return memo.url ? iconEl({ kind: 'image', src: memo.url }, 30) : null;
+    if (mode === 'upload') {
+      if (draft.iconData) return iconEl({ kind: 'image', src: draft.iconData }, 30);
+      return existing?.icon === 'upload' ? iconEl(live, 30) : null;
+    }
+    if (mode === 'auto' && draft.type === 'group') return iconEl({ kind: 'builtin', name: 'folder' }, 30);
+    if (mode === 'auto' && draft.type === 'http' && existing?.icon === '' && existing.type === 'http') return iconEl(live, 30);
+    return null;
+  };
+
+  const renderIcon = () => {
+    const previewBox = h('div', { class: 'icon-preview', title: 'Preview' }, iconPreview() ?? h('span', { class: 'muted' }, '—'));
+    const refresh = () => fill(previewBox, iconPreview() ?? h('span', { class: 'muted' }, '—'));
+    let controls = null;
+    let help = null;
+    if (mode === 'auto') {
+      help = draft.type === 'http'
+        ? 'Uses the website’s favicon. Waterfall Alert fetches it after you save, and re-checks it weekly.'
+        : draft.type === 'group' ? 'Groups show a folder.' : 'HTTP monitors show the website’s favicon and groups show a folder. Other types have no icon unless you pick one.';
+    } else if (mode === 'builtin') {
+      controls = h('div', { class: 'glyph-grid', role: 'listbox', 'aria-label': 'Built-in icons' },
+        Object.keys(GLYPHS).map((name) => h('button', {
+          type: 'button',
+          class: `glyph-pick${memo.builtin === name ? ' on' : ''}`,
+          title: name,
+          role: 'option',
+          'aria-selected': String(memo.builtin === name),
+          onclick: () => {
+            memo.builtin = name;
+            renderIcon();
+          },
+        }, glyphPreview(name, 20))));
+    } else if (mode === 'emoji') {
+      const input = h('input', {
+        id: 'f-icon-emoji',
+        class: 'emoji-input',
+        maxlength: 16,
+        value: memo.emoji,
+        placeholder: '🖥️',
+        'aria-label': 'Emoji',
+        oninput: (e) => {
+          memo.emoji = e.target.value.trim();
+          refresh();
+        },
+      });
+      controls = h('div', { class: 'emoji-row' }, input,
+        EMOJI.map((em) => h('button', {
+          type: 'button',
+          class: 'emoji-pick',
+          onclick: () => {
+            memo.emoji = em;
+            input.value = em;
+            refresh();
+          },
+        }, em)));
+    } else if (mode === 'url') {
+      controls = h('input', {
+        id: 'f-icon-url',
+        type: 'url',
+        value: memo.url,
+        placeholder: 'https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/proxmox.svg',
+        'aria-label': 'Image URL',
+        oninput: (e) => {
+          memo.url = e.target.value.trim();
+        },
+        onchange: refresh,
+      });
+      help = 'Waterfall Alert downloads and caches the image, so the browser never has to reach that site. The dashboard-icons project has logos for most self-hosted apps.';
+    } else if (mode === 'upload') {
+      controls = h('input', {
+        type: 'file',
+        accept: 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/x-icon,.ico',
+        'aria-label': 'Icon image',
+        onchange: async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          try {
+            draft.iconData = await toIconDataUrl(file);
+            refresh();
+          } catch {
+            toast('Couldn’t read that image', 'error');
+          }
+        },
+      });
+      help = 'PNG, JPEG, GIF, WebP, SVG or ICO. It is shrunk to 128 px.';
+    }
+    fill(iconBox,
+      h('label', { for: 'f-icon-mode' }, 'Icon'),
+      h('div', { class: 'icon-row' },
+        previewBox,
+        h('div', { class: 'icon-controls' },
+          h('select', {
+            id: 'f-icon-mode',
+            onchange: (e) => {
+              mode = e.target.value;
+              renderIcon();
+            },
+          }, ICON_MODES.map(([k, label]) => h('option', { value: k, selected: mode === k }, label))),
+          controls)),
+      help ? h('small', null, help) : null);
   };
 
   const pushInfo = () => {
@@ -203,6 +350,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
               draft.type = e.target.value;
               draft.config = {};
               renderType();
+              renderIcon();
             },
           }, Object.entries(TYPE_LABEL).map(([k, v]) => h('option', { value: k, selected: draft.type === k }, v)))),
         h('div', { class: 'field' },
@@ -211,7 +359,8 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       typeBox,
       h('div', { class: 'field' },
         h('label', { for: 'f-desc' }, 'Description (optional)'),
-        h('input', { id: 'f-desc', value: draft.description, oninput: (e) => { draft.description = e.target.value; } }))),
+        h('input', { id: 'f-desc', value: draft.description, oninput: (e) => { draft.description = e.target.value; } })),
+      iconBox),
     h('section', null,
       h('h3', null, 'Hierarchy'),
       hierarchyBox),
@@ -248,6 +397,11 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
     const missing = TYPE_FIELDS[draft.type].find((f) => f.required && !String(draft.config[f.key] ?? '').trim());
     if (!draft.name.trim()) return toast('Name is required', 'error');
     if (missing) return toast(`${missing.label} is required`, 'error');
+    draft.icon = iconSpec();
+    if (mode === 'emoji' && !memo.emoji) return toast('Enter an emoji for the icon, or pick another option', 'error');
+    if (mode === 'url' && !memo.url) return toast('Enter an image URL for the icon, or pick another option', 'error');
+    if (mode === 'upload' && !draft.iconData && existing?.icon !== 'upload') return toast('Choose an image to upload for the icon', 'error');
+    if (mode !== 'upload') delete draft.iconData;
     for (const f of TYPE_FIELDS[draft.type]) if (f.def && draft.config[f.key] == null) draft.config[f.key] = f.def;
     try {
       const saved = await api(existing ? `monitors/${existing.id}` : 'monitors', {
@@ -262,6 +416,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
   });
 
   renderType();
+  renderIcon();
   renderHierarchy();
   fill(root, form);
 }

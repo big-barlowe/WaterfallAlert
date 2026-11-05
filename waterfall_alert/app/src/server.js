@@ -6,7 +6,8 @@ import { Store } from './db.js';
 import { Engine } from './engine.js';
 import { checkers } from './checkers/index.js';
 import { deliver } from './notifier.js';
-import { createApi, HttpError } from './api.js';
+import { createApi, HttpError, RawResponse } from './api.js';
+import { IconCache } from './icons.js';
 import { config, isAddon, log } from './config.js';
 
 const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public');
@@ -24,7 +25,8 @@ const MIME = {
 fs.mkdirSync(config.dataDir, { recursive: true });
 const store = new Store(path.join(config.dataDir, 'waterfall.db'));
 const engine = new Engine({ store, checkers, notify: deliver });
-const api = createApi({ store, engine });
+const icons = new IconCache({ store, onChange: () => engine.touch() });
+const api = createApi({ store, engine, icons });
 
 function send(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -85,7 +87,12 @@ const server = http.createServer(async (req, res) => {
   if (!url.pathname.startsWith('/api/')) return serveStatic(res, url.pathname);
   try {
     const body = req.method === 'GET' ? null : await readBody(req);
-    send(res, 200, await api(req, url, body));
+    const out = await api(req, url, body);
+    if (out instanceof RawResponse) {
+      res.writeHead(200, { 'Content-Type': out.type, ...out.headers });
+      return res.end(out.body);
+    }
+    send(res, 200, out);
   } catch (err) {
     if (!(err instanceof HttpError)) log.error(`${req.method} ${url.pathname}:`, err);
     send(res, err.status || 500, { error: err.message });
@@ -95,6 +102,8 @@ const server = http.createServer(async (req, res) => {
 server.listen(config.port, () => {
   log.info(`Waterfall Alert listening on :${config.port} (data: ${config.dataDir}${isAddon ? ', Home Assistant add-on mode' : ''})`);
   engine.start().catch((err) => log.error('Engine failed to start:', err));
+  icons.sync(store.listMonitors());
+  setInterval(() => icons.sync(store.listMonitors()), 6 * 3600 * 1000).unref();
 });
 
 function shutdown() {

@@ -17,7 +17,9 @@ export function parseStatusCodes(spec) {
   return (code) => ranges.some(([lo, hi]) => code >= lo && code <= hi);
 }
 
-function request(url, opts, redirectsLeft) {
+// Resolves { code, headers, url (after redirects), body: Buffer, size }. The
+// body is truncated to `opts.maxBody`; `size` is the full length.
+export function request(url, opts, redirectsLeft = MAX_REDIRECTS) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
     const lib = u.protocol === 'https:' ? https : http;
@@ -33,13 +35,14 @@ function request(url, opts, redirectsLeft) {
         resolve(request(new URL(res.headers.location, u).toString(), opts, redirectsLeft - 1));
         return;
       }
+      const max = opts.maxBody ?? MAX_BODY;
       const chunks = [];
       let size = 0;
       res.on('data', (c) => {
-        if (size < MAX_BODY) chunks.push(c);
+        if (size < max) chunks.push(c);
         size += c.length;
       });
-      res.on('end', () => resolve({ code, body: Buffer.concat(chunks).toString('utf8') }));
+      res.on('end', () => resolve({ code, headers: res.headers, url, body: Buffer.concat(chunks).subarray(0, max), size }));
       res.on('error', reject);
     });
     req.on('timeout', () => req.destroy(new Error(`Timed out after ${opts.timeoutMs / 1000}s`)));
@@ -69,12 +72,13 @@ export async function checkHttp(monitor) {
     timeoutMs: monitor.timeout * 1000,
   }, MAX_REDIRECTS);
   const ping = Math.round(performance.now() - start);
+  const body = res.body.toString('utf8');
 
   if (!parseStatusCodes(c.acceptedCodes)(res.code)) {
     return { ok: false, ping, msg: `HTTP ${res.code}` };
   }
   if (c.keyword) {
-    const found = res.body.includes(c.keyword);
+    const found = body.includes(c.keyword);
     if (found === Boolean(c.invertKeyword)) {
       return {
         ok: false,
