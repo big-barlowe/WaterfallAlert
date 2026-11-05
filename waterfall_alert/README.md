@@ -2,7 +2,7 @@
 
 Hierarchical uptime monitoring: monitors are arranged like folders, checked top-down, and a failure sends **one alert for the root cause** that lists everything downstream of it.
 
-- HTTP(S), TCP, ping, DNS, Home Assistant entity, push and group monitors
+- HTTP(S), TCP, ping, DNS, Home Assistant entity, Minecraft, push and group monitors
 - Multiple parents per monitor, drag-and-drop editing
 - Click a monitor in the falls diagram to trace its upstream and downstream
 - Monitor icons: automatic favicons, built-in icons, emoji, image URL or upload

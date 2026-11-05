@@ -17,6 +17,7 @@ export function describeTarget(m) {
     case 'ping': return c.host || '';
     case 'dns': return c.hostname ? `${c.hostname} (${c.recordType || 'A'})` : '';
     case 'ha_entity': return c.entityId || '';
+    case 'minecraft': return c.host ? `${c.host}${c.port ? `:${c.port}` : ''}` : '';
     case 'push': return 'push';
     default: return '';
   }

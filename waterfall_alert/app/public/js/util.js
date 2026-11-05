@@ -67,6 +67,7 @@ export const TYPE_LABEL = {
   ping: 'Ping',
   dns: 'DNS',
   ha_entity: 'HA entity',
+  minecraft: 'Minecraft',
   push: 'Push',
 };
 

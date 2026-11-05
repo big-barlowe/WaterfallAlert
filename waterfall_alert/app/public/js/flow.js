@@ -118,6 +118,7 @@ function subline(m) {
   if (m.status === 'blocked') return 'Blocked upstream';
   if (m.status === 'down') return truncate(m.msg || 'Down', 22);
   if (m.status === 'paused') return 'Paused';
+  if (m.type === 'minecraft' && /players/.test(m.msg)) return `${m.msg.split(' · ')[0]} · ${fmtMs(m.ping)}`;
   return `${TYPE_LABEL[m.type]} · ${fmtMs(m.ping)}`;
 }
 

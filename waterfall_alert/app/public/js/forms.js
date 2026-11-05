@@ -20,13 +20,17 @@ const TYPE_FIELDS = {
   ping: [{ key: 'host', label: 'Host', placeholder: '192.168.1.1', required: true }],
   dns: [
     { key: 'hostname', label: 'Hostname', placeholder: 'example.com', required: true },
-    { key: 'recordType', label: 'Record type', type: 'select', options: ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'], def: 'A' },
+    { key: 'recordType', label: 'Record type', type: 'select', options: ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV'], def: 'A' },
     { key: 'server', label: 'Resolver (optional)', placeholder: '1.1.1.1' },
-    { key: 'expected', label: 'Expected value contains (optional)' },
+    { key: 'expected', label: 'Expected value contains (optional)', help: 'SRV records read as target:port, e.g. mc.example.net:25565. Their hostname looks like _minecraft._tcp.example.net.' },
   ],
   ha_entity: [
     { key: 'entityId', label: 'Entity ID', placeholder: 'binary_sensor.nas_online', required: true },
     { key: 'expectedState', label: 'Expected state (optional)', placeholder: 'on, home', help: 'Comma separated. Blank = up unless "unavailable" or "unknown".' },
+  ],
+  minecraft: [
+    { key: 'host', label: 'Server address', placeholder: 'mc.example.net', required: true, help: 'What you type into Minecraft. Its SRV record is followed automatically.' },
+    { key: 'port', label: 'Port (optional)', type: 'number', placeholder: '25565', help: 'Leave blank to use the SRV record (or 25565 without one). Setting a port skips the SRV lookup, as it does in the game.' },
   ],
   push: [],
 };
@@ -38,6 +42,7 @@ const TYPE_HELP = {
   ping: 'Sends an ICMP ping.',
   dns: 'Resolves a DNS record.',
   ha_entity: 'Watches a Home Assistant entity state.',
+  minecraft: 'Asks a Minecraft: Java Edition server for its status, the same way the multiplayer server list does, so it is only up when the server actually answers. Shows players online and the version. Bedrock servers are not supported.',
   push: 'Passive: something else calls the push URL. Down if no push arrives within the interval.',
 };
 
@@ -171,7 +176,8 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       return existing?.icon === 'upload' ? iconEl(live, 30) : null;
     }
     if (mode === 'auto' && draft.type === 'group') return iconEl({ kind: 'builtin', name: 'folder' }, 30);
-    if (mode === 'auto' && draft.type === 'http' && existing?.icon === '' && existing.type === 'http') return iconEl(live, 30);
+    if (mode === 'auto' && ['http', 'minecraft'].includes(draft.type) && existing?.icon === '' && existing.type === draft.type) return iconEl(live, 30);
+    if (mode === 'auto' && draft.type === 'minecraft') return iconEl({ kind: 'builtin', name: 'gamepad' }, 30);
     return null;
   };
 
@@ -183,7 +189,8 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
     if (mode === 'auto') {
       help = draft.type === 'http'
         ? 'Uses the website’s favicon. Waterfall Alert fetches it after you save, and re-checks it weekly.'
-        : draft.type === 'group' ? 'Groups show a folder.' : 'HTTP monitors show the website’s favicon and groups show a folder. Other types have no icon unless you pick one.';
+        : draft.type === 'minecraft' ? 'Uses the server’s own icon (the one in the multiplayer list), fetched after you save.'
+          : draft.type === 'group' ? 'Groups show a folder.' : 'HTTP monitors show the website’s favicon, Minecraft servers their server icon, and groups a folder. Other types have no icon unless you pick one.';
     } else if (mode === 'builtin') {
       controls = h('div', { class: 'glyph-grid', role: 'listbox', 'aria-label': 'Built-in icons' },
         Object.keys(GLYPHS).map((name) => h('button', {

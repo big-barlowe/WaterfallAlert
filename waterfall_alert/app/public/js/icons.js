@@ -24,6 +24,7 @@ export const GLYPHS = {
   tv: '<rect x="3" y="4" width="18" height="12.5" rx="2"/><path d="M8.5 20.5h7M12 16.5v4"/>',
   speaker: '<rect x="5" y="2.5" width="14" height="19" rx="2"/><circle cx="12" cy="14.5" r="3.5"/><path d="M12 6.5h.01"/>',
   phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
+  gamepad: '<path d="M7.5 7.5h9a4.5 4.5 0 0 1 4.4 5.5l-.8 3.6a2.3 2.3 0 0 1-4 .9L14.5 15.5h-5l-1.6 2a2.3 2.3 0 0 1-4-.9l-.8-3.6a4.5 4.5 0 0 1 4.4-5.5z"/><path d="M8 10v3.5M6.25 11.75h3.5M15.5 11h.01M17.5 13h.01"/>',
   printer: '<path d="M7 9V3.5h10V9"/><rect x="3.5" y="9" width="17" height="8" rx="2"/><path d="M7 14h10v6.5H7z"/>',
   mail: '<rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M3.5 7l8.5 6 8.5-6"/>',
   drop: '<path d="M12 3.5c3.5 4.3 6 7.6 6 10.8a6 6 0 0 1-12 0c0-3.2 2.5-6.5 6-10.8z"/>',

@@ -64,7 +64,7 @@ Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are j
 
 ## Icons
 
-- A monitor's `icon` column holds a spec: `''` automatic (favicon for HTTP, folder for groups), `none`, `builtin:<name>`, `emoji:<text>`, `url:<url>`, `upload`. Parsing and validation are in `src/icons.js`.
+- A monitor's `icon` column holds a spec: `''` automatic (favicon for HTTP, the status-reply icon for Minecraft, folder for groups), `none`, `builtin:<name>`, `emoji:<text>`, `url:<url>`, `upload`. Parsing and validation are in `src/icons.js`.
 - `IconCache.sync(monitors, forceIds)` runs after every monitor create/update/delete and every 6h. It drops images nothing wants and fetches missing or stale ones in the background, then calls `engine.touch()` so the UI polls them in.
 - `/api/state` replaces each monitor's spec with a render descriptor from `icons.describe()`: `{kind:'image', src}`, `{kind:'builtin', name}`, `{kind:'emoji', value}` or `null`. `GET api/monitors/:id` still returns the raw spec, which is what the form edits.
 - Images are served from `api/monitors/:id/icon` with a sandboxing CSP, because SVGs come from arbitrary sites and the add-on shares Home Assistant's origin. Keep those headers. Types are sniffed from bytes (`sniffImage`), never from Content-Type.

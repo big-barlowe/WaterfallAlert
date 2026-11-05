@@ -1,4 +1,5 @@
 import { request as httpRequest } from './checkers/http.js';
+import { minecraftStatus as defaultMinecraftStatus } from './checkers/minecraft.js';
 import { log } from './config.js';
 
 export const MAX_ICON_BYTES = 256 * 1024;
@@ -8,7 +9,8 @@ const TIMEOUT_MS = 8000;
 const MAX_PAGE_BYTES = 512 * 1024;
 
 // The icon spec stored on a monitor:
-//   ''               automatic: the site's favicon for HTTP monitors, a folder for groups
+//   ''               automatic: the site's favicon for HTTP monitors, the server
+//                    icon for Minecraft, a folder for groups
 //   'none'           no icon
 //   'builtin:<name>' one of the UI's built-in glyphs (public/js/icons.js)
 //   'emoji:<text>'   an emoji
@@ -108,10 +110,11 @@ export function findIconLinks(html, base) {
 // in the background, one at a time; `onChange` fires when an image appears,
 // changes or goes away, so the UI can pick it up.
 export class IconCache {
-  constructor({ store, onChange = () => {}, request = httpRequest, now = Date.now }) {
+  constructor({ store, onChange = () => {}, request = httpRequest, minecraftStatus = defaultMinecraftStatus, now = Date.now }) {
     this.store = store;
     this.onChange = onChange;
     this.request = request;
+    this.minecraftStatus = minecraftStatus;
     this.now = now;
     this.meta = new Map(store.listIconMeta().map((r) => [r.monitorId, r]));
     this.monitors = new Map();
@@ -122,7 +125,11 @@ export class IconCache {
   // What the cache should hold for a monitor: a source key, or null.
   wanted(m) {
     const spec = parseIconSpec(m.icon);
-    if (spec.kind === 'auto') return m.type === 'http' && m.config?.url ? `favicon:${m.config.url}` : null;
+    if (spec.kind === 'auto') {
+      if (m.type === 'http' && m.config?.url) return `favicon:${m.config.url}`;
+      if (m.type === 'minecraft' && m.config?.host) return `minecraft:${m.config.host}:${m.config.port ?? ''}`;
+      return null;
+    }
     if (spec.kind === 'url') return `url:${spec.value}`;
     if (spec.kind === 'upload') return 'upload';
     return null;
@@ -177,6 +184,7 @@ export class IconCache {
       return { kind: 'image', src: `api/monitors/${m.id}/icon?v=${meta.updatedAt}` };
     }
     if (spec.kind === 'auto' && m.type === 'group') return { kind: 'builtin', name: 'folder' };
+    if (spec.kind === 'auto' && m.type === 'minecraft') return { kind: 'builtin', name: 'gamepad' };
     return null;
   }
 
@@ -206,9 +214,9 @@ export class IconCache {
     let img = null;
     let error = '';
     try {
-      img = want.startsWith('favicon:')
-        ? await this.#favicon(m.config.url, Boolean(m.config.ignoreTls))
-        : await this.#image(want.slice('url:'.length), false);
+      if (want.startsWith('favicon:')) img = await this.#favicon(m.config.url, Boolean(m.config.ignoreTls));
+      else if (want.startsWith('minecraft:')) img = await this.#serverIcon(m);
+      else img = await this.#image(want.slice('url:'.length), false);
     } catch (err) {
       error = err.message;
     }
@@ -244,6 +252,13 @@ export class IconCache {
     const mime = sniffImage(res.body);
     if (!mime) throw new Error(`${url} is not an image`);
     return { mime, data: res.body };
+  }
+
+  // Minecraft servers send their 64px icon as a data URL in the status reply.
+  async #serverIcon(m) {
+    const { status } = await this.minecraftStatus(m.config, TIMEOUT_MS);
+    if (typeof status.favicon !== 'string') throw new Error('The server has no icon');
+    return decodeDataUrl(status.favicon);
   }
 
   async #links(url, ignoreTls) {

@@ -54,7 +54,13 @@ export async function checkDns(monitor) {
     return { ok: false, msg: `${recordType} ${hostname}: ${err.code || err.message}` };
   }
   const ping = Math.round(performance.now() - start);
-  const flat = records.map((r) => (typeof r === 'string' ? r : Array.isArray(r) ? r.join('') : r.exchange || JSON.stringify(r)));
+  const flat = records.map((r) => {
+    if (typeof r === 'string') return r;
+    if (Array.isArray(r)) return r.join('');
+    if (r.exchange) return r.exchange;
+    if (r.port != null && r.name) return `${r.name}:${r.port}`; // SRV
+    return JSON.stringify(r);
+  });
   if (expected && !flat.some((v) => v.includes(expected))) {
     return { ok: false, ping, msg: `Expected "${expected}", got ${flat.join(', ') || 'nothing'}` };
   }

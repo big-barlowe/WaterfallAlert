@@ -50,7 +50,7 @@ Choose a monitor's icon under **Settings → General → Icon**:
 
 | Option | |
 |---|---|
-| Automatic (default) | HTTP monitors use the website's favicon. Groups show a folder. Other types have no icon. |
+| Automatic (default) | HTTP monitors use the website's favicon and Minecraft monitors the server icon. Groups show a folder. Other types have no icon. |
 | Built-in | A set of simple icons for routers, servers, NAS boxes, databases, containers and more. |
 | Emoji | Any emoji. |
 | Image URL | Any image, e.g. from the [dashboard-icons](https://github.com/homarr-labs/dashboard-icons) project. |
@@ -77,8 +77,9 @@ The **Alerts** page lists every alert that was sent and which channels delivered
 | HTTP(S) | Status code in the accepted list (default `200-299`), optionally a keyword in the body. Follows redirects. |
 | TCP port | A TCP connection opens. |
 | Ping | ICMP echo reply. |
-| DNS | A record resolves (optionally against a specific resolver / expected value). |
+| DNS | A record resolves (optionally against a specific resolver / expected value). SRV records read as `target:port`. |
 | HA entity | The entity isn't `unavailable`/`unknown`, or matches the expected state(s). |
+| Minecraft | A Java Edition server answers a status request (the one the multiplayer server list uses). Enter the address you'd type into the game: its `_minecraft._tcp` SRV record is followed, or set a port to skip that. Shows players online and the version. Bedrock isn't supported. |
 | Push | Something calls `/api/push/<token>` at least once per interval. Add `?status=down&msg=…` to report a failure, `&ping=123` to record a time. |
 | Group | Nothing; it's a folder. |
 
