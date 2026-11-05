@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Waterfall Alert</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="show-tree">
+  <header class="top">
+    <div class="top-inner">
+      <a class="brand" href="#/">
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M4 7h16c4 0 6 2 6 5v13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <path class="fall a" d="M26 13v12" fill="none" stroke="#a5f3fc" stroke-width="2" stroke-linecap="round" stroke-dasharray="3 4"/>
+          <path d="M16 28c3-2 7-2 10 0s7 2 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" opacity=".6"/>
+        </svg>
+        <span>Waterfall <b>Alert</b></span>
+      </a>
+      <nav class="nav" aria-label="Main">
+        <a href="#/" data-route="dashboard">Falls</a>
+        <a href="#/alerts" data-route="alerts">Alerts</a>
+        <a href="#/notifications" data-route="notifications">Notifications</a>
+        <a href="#/settings" data-route="settings">Settings</a>
+      </nav>
+      <div id="summary" class="summary" aria-live="polite"></div>
+    </div>
+    <svg class="waves" viewBox="0 0 1200 40" preserveAspectRatio="none" aria-hidden="true">
+      <path class="wave w1" d="M0 20 Q 75 5 150 20 T 300 20 T 450 20 T 600 20 T 750 20 T 900 20 T 1050 20 T 1200 20 T 1350 20 T 1500 20 T 1650 20 T 1800 20 T 1950 20 T 2100 20 T 2250 20 T 2400 20 V40 H0 Z"/>
+      <path class="wave w2" d="M0 24 Q 100 12 200 24 T 400 24 T 600 24 T 800 24 T 1000 24 T 1200 24 T 1400 24 T 1600 24 T 1800 24 T 2000 24 T 2200 24 T 2400 24 V40 H0 Z"/>
+    </svg>
+  </header>
+
+  <div id="conn" class="conn" hidden>Lost connection to Waterfall Alert — retrying…</div>
+
+  <div class="layout">
+    <aside class="side" aria-label="Monitors">
+      <div id="tree-tools" class="tree-tools">
+        <input id="search" type="search" placeholder="Search monitors" aria-label="Search monitors">
+        <a class="btn primary small" href="#/add" title="Add monitor">+ Add</a>
+        <button id="edit-toggle" class="btn small" aria-pressed="false">Edit</button>
+      </div>
+      <p id="edit-hint" class="edit-hint" hidden>
+        Drag a monitor onto another to nest it underneath. Hold <kbd>Alt</kbd>/<kbd>⌥</kbd> while dropping to add an extra parent instead of moving. On touch screens use <b>⇅</b>.
+      </p>
+      <div id="tree" class="tree"></div>
+    </aside>
+    <main id="main" class="main"></main>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
