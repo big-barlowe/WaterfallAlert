@@ -50,19 +50,29 @@ See [waterfall_alert/DOCS.md](waterfall_alert/DOCS.md) for configuration and usa
 
 ### With Docker (no Home Assistant needed)
 
+Download [`compose.yaml`](compose.yaml) into an empty folder, set your time zone (`TZ`) in it, and start it:
+
 ```sh
-git clone https://github.com/big-barlowe/WaterfallAlert.git
-cd WaterfallAlert
-docker compose up -d --build
+mkdir waterfall-alert && cd waterfall-alert
+curl -O https://raw.githubusercontent.com/big-barlowe/WaterfallAlert/main/compose.yaml
+docker compose up -d
 ```
 
-Then open `http://<your-server>:8099`. Data is stored in `./data`. Every monitor type and notification channel works, except the two that talk to Home Assistant, which need a URL and access token if you want them.
+Or without Compose:
+
+```sh
+docker run -d --name waterfall-alert --restart unless-stopped \
+  -p 8099:8099 -v /srv/waterfall-alert:/data -e TZ=America/Chicago \
+  ghcr.io/big-barlowe/waterfall-alert:latest
+```
+
+Then open `http://<your-server>:8099`. Data is stored in `./data` (or the folder you mounted at `/data`). Every monitor type and notification channel works, except the two that talk to Home Assistant, which need a URL and access token if you want them.
 
 > **There is no login.** Under Home Assistant, HA handles sign-in. Run on its own, anyone who can reach the port can use the app. Keep it on a trusted network, or put it behind a reverse proxy that adds authentication.
 
 The **[Docker guide](docs/docker.md)** covers:
-- a compose file that builds straight from GitHub, without cloning
-- plain `docker run`
+- image tags and pinning a version
+- building from source
 - configuration (time zone, connecting to Home Assistant)
 - backups and updates
 - a reverse proxy with a login
@@ -80,7 +90,12 @@ npm start            # http://localhost:8099, data in ./data
 npm test
 ```
 
-No local Node? `docker compose up -d --build` from the repository root runs your working copy.
+No local Node? Build and run your working copy with Docker:
+
+```sh
+docker build -t waterfall-alert:dev waterfall_alert
+docker run --rm -p 8099:8099 -v "$PWD/data:/data" waterfall-alert:dev
+```
 
 ## License
 

@@ -1,16 +1,17 @@
 # Waterfall Alert without Home Assistant. Full guide: docs/docker.md
 #
-#   docker compose up -d --build
+#   docker compose up -d
 #
 # then open http://<this-machine>:8099. There is no login, so keep it on a
 # trusted network or behind a reverse proxy that adds one (see the guide).
 services:
   waterfall-alert:
-    # Builds from this checkout. To build straight from GitHub without
-    # cloning, use this line instead:
+    # Pin a version (e.g. :0.5.1) to update only when you choose to.
+    image: ghcr.io/big-barlowe/waterfall-alert:latest
+    # To build from source instead (local changes), replace the image line
+    # with one of these and use `docker compose up -d --build`:
+    # build: ./waterfall_alert
     # build: https://github.com/big-barlowe/WaterfallAlert.git#main:waterfall_alert
-    build: ./waterfall_alert
-    image: waterfall-alert:local
     container_name: waterfall-alert
     restart: unless-stopped
     ports:

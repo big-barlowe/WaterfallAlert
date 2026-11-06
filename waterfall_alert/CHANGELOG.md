@@ -2,7 +2,7 @@
 
 ## 0.5.1
 
-- Running without Home Assistant: new [Docker guide](https://github.com/big-barlowe/WaterfallAlert/blob/main/docs/docker.md) and a `compose.yaml` in the repository.
+- Running without Home Assistant: a ready-made Docker image, `ghcr.io/big-barlowe/waterfall-alert` (amd64 and arm64), a `compose.yaml` and a [Docker guide](https://github.com/big-barlowe/WaterfallAlert/blob/main/docs/docker.md).
 - Outside Home Assistant, a push monitor's edit page shows its real push URL instead of the add-on placeholder.
 
 ## 0.5.0

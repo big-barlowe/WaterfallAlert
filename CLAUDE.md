@@ -6,7 +6,7 @@ Waterfall Alert is a Home Assistant add-on for hierarchical uptime monitoring (U
 
 ```
 repository.yaml              HA add-on repository manifest (this repo is the repository)
-compose.yaml                 standalone deployment (builds waterfall_alert/); guide in docs/docker.md
+compose.yaml                 standalone deployment using the ghcr.io image; guide in docs/docker.md
 waterfall_alert/             the add-on (Supervisor build context)
   config.yaml                add-on manifest: version, ingress, options/schema
   Dockerfile                 node:22-alpine, copies app/
@@ -124,4 +124,4 @@ Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are j
 
 ## Releasing
 
-Bump the version in **both** `waterfall_alert/config.yaml` and `waterfall_alert/app/package.json` (the UI reads it from package.json), and add a `CHANGELOG.md` entry. The Supervisor offers the update when `config.yaml`'s version changes.
+Bump the version in **both** `waterfall_alert/config.yaml` and `waterfall_alert/app/package.json` (the UI reads it from package.json), and add a `CHANGELOG.md` entry. The Supervisor offers the update when `config.yaml`'s version changes. On the push to main, CI publishes `ghcr.io/big-barlowe/waterfall-alert:<version>`, `:<major.minor>` and `:latest` (only if that version has no image yet), and always `:edge`. A version bump is therefore also the Docker release.

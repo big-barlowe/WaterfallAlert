@@ -1,6 +1,6 @@
 # Running Waterfall Alert with Docker
 
-You don't need Home Assistant to use Waterfall Alert. The add-on is an ordinary Docker image, and outside Home Assistant it runs as a standalone web app. Everything works the same, except:
+You don't need Home Assistant to use Waterfall Alert. It is published as a Docker image, `ghcr.io/big-barlowe/waterfall-alert`, and outside Home Assistant it runs as a standalone web app. Everything works the same, except:
 
 - **Home Assistant entity monitors** and the **Home Assistant notification channel** need a connection to a Home Assistant instance. See [Connecting to Home Assistant](#connecting-to-home-assistant-optional). All other monitor types (HTTP(S), TCP, ping, DNS, Minecraft, push, group) and notification channels (ntfy, Discord, Slack, Telegram, Pushover, Gotify, webhook, email) work on their own.
 - **There is no login.** Inside Home Assistant, HA handles sign-in. On its own, anyone who can reach the port can use the UI. Keep it on a trusted network, or put it behind a reverse proxy that adds a login. See [Security](#security).
@@ -10,6 +10,8 @@ Contents:
 - [Requirements](#requirements)
 - [Docker Compose (recommended)](#docker-compose-recommended)
 - [Plain `docker run`](#plain-docker-run)
+- [Image tags](#image-tags)
+- [Building it yourself](#building-it-yourself)
 - [Configuration](#configuration)
 - [Your data and backups](#your-data-and-backups)
 - [Updating](#updating)
@@ -25,54 +27,41 @@ Contents:
 - A 64-bit machine: x86-64 (amd64) or ARM (arm64, e.g. a Raspberry Pi 4 or 5 running a 64-bit OS).
 - About 170 MB of disk for the image, plus the database. The database grows with heartbeat history; the default 90-day retention keeps it modest.
 
-There is no prebuilt image to pull yet. Docker builds it from this repository the first time you start it, which takes a minute.
-
 ## Docker Compose (recommended)
 
-### Option A: clone the repository
+1. Make a folder for it, e.g. `~/waterfall-alert`, and save this as `compose.yaml` inside (the same file is at the top of this repository, [`compose.yaml`](../compose.yaml)):
 
-```sh
-git clone https://github.com/big-barlowe/WaterfallAlert.git
-cd WaterfallAlert
-docker compose up -d --build
-```
+   ```yaml
+   services:
+     waterfall-alert:
+       image: ghcr.io/big-barlowe/waterfall-alert:latest
+       container_name: waterfall-alert
+       restart: unless-stopped
+       ports:
+         - "8099:8099"
+       volumes:
+         - ./data:/data
+       environment:
+         TZ: America/Chicago        # your time zone
+         LOG_LEVEL: info
+         # HA_URL: http://homeassistant.local:8123
+         # HA_TOKEN: <long-lived access token>
+       healthcheck:
+         test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8099/api/info"]
+         interval: 30s
+         timeout: 5s
+         start_period: 10s
+         retries: 3
+   ```
 
-This uses the [`compose.yaml`](../compose.yaml) at the top of the repository. Open `http://<your-server>:8099` and add your first monitor. Your data goes into a `data` folder next to `compose.yaml`.
+2. Start it:
 
-### Option B: no clone, just a compose file
+   ```sh
+   cd ~/waterfall-alert
+   docker compose up -d
+   ```
 
-Create a folder (e.g. `~/waterfall-alert`) with this `compose.yaml` in it. Docker fetches the source from GitHub when it builds:
-
-```yaml
-services:
-  waterfall-alert:
-    build: https://github.com/big-barlowe/WaterfallAlert.git#main:waterfall_alert
-    image: waterfall-alert:local
-    container_name: waterfall-alert
-    restart: unless-stopped
-    ports:
-      - "8099:8099"
-    volumes:
-      - ./data:/data
-    environment:
-      TZ: America/Chicago        # your time zone
-      LOG_LEVEL: info
-      # HA_URL: http://homeassistant.local:8123
-      # HA_TOKEN: <long-lived access token>
-    healthcheck:
-      test: ["CMD", "wget", "-qO", "/dev/null", "http://localhost:8099/api/info"]
-      interval: 30s
-      timeout: 5s
-      start_period: 10s
-      retries: 3
-```
-
-```sh
-cd ~/waterfall-alert
-docker compose up -d --build
-```
-
-`#main` builds the latest code on the main branch. To stay on a particular version, use the full 40-character hash of its commit instead (`#3371cfe…:waterfall_alert`). The short form doesn't work there. The commit list is on GitHub.
+3. Open `http://<your-server>:8099` and add your first monitor. Your data is kept in the `data` folder next to `compose.yaml`.
 
 ### Everyday commands
 
@@ -87,19 +76,38 @@ docker compose up -d --build
 ## Plain `docker run`
 
 ```sh
-git clone https://github.com/big-barlowe/WaterfallAlert.git
-docker build -t waterfall-alert:local WaterfallAlert/waterfall_alert
-
 docker run -d \
   --name waterfall-alert \
   --restart unless-stopped \
   -p 8099:8099 \
   -v /srv/waterfall-alert:/data \
   -e TZ=America/Chicago \
-  waterfall-alert:local
+  ghcr.io/big-barlowe/waterfall-alert:latest
 ```
 
-You can also build without cloning: `docker build -t waterfall-alert:local https://github.com/big-barlowe/WaterfallAlert.git#main:waterfall_alert`.
+## Image tags
+
+| Tag | |
+|---|---|
+| `latest` | The newest release. |
+| `0.5.1` (etc.) | One exact release. It never changes, so use it to stay on a version until you choose to move. |
+| `0.5` (etc.) | The newest release in that series. |
+| `edge` | The newest code on the main branch, including unreleased changes. Mostly for testing. |
+
+Images are built for amd64 and arm64 by [GitHub Actions](../.github/workflows/test.yml) after the tests pass. The [changelog](../waterfall_alert/CHANGELOG.md) lists every release.
+
+## Building it yourself
+
+To build from source instead, e.g. to run local changes, replace the `image:` line in `compose.yaml` with one of these, then run `docker compose up -d --build`:
+
+```yaml
+    # from a clone of this repository (compose.yaml at its top level)
+    build: ./waterfall_alert
+    # or straight from GitHub, without cloning
+    build: https://github.com/big-barlowe/WaterfallAlert.git#main:waterfall_alert
+```
+
+In the GitHub form, `#main` is the branch. To build a particular version, use the full 40-character hash of its commit; the short form doesn't work there.
 
 ## Configuration
 
@@ -134,24 +142,16 @@ For a backup without stopping, use SQLite's online backup, e.g. `sqlite3 data/wa
 
 ## Updating
 
-**Option A (cloned repository):**
-
 ```sh
-cd WaterfallAlert
-git pull
-docker compose up -d --build
-```
-
-**Option B (compose file only):**
-
-```sh
-docker compose build --pull
+docker compose pull
 docker compose up -d
 ```
 
-Your data is kept. Database changes between versions are applied automatically when the new version starts. You can't go back to an older version with an upgraded database, so take a backup before big jumps. See the [changelog](../waterfall_alert/CHANGELOG.md) for what's new.
+With `latest`, this moves you to the newest release. With a version tag such as `0.5.1`, change the tag in `compose.yaml` first. Your data is kept: database changes between versions are applied automatically when the new version starts. You can't go back to an older version with an upgraded database, so take a backup before big jumps.
 
 To clear out old images afterwards: `docker image prune`.
+
+If you build it yourself, run `git pull` (for a clone), then `docker compose build --pull` and `docker compose up -d`.
 
 ## Security
 
