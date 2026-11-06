@@ -6,6 +6,7 @@ Waterfall Alert is a Home Assistant add-on for hierarchical uptime monitoring (U
 
 ```
 repository.yaml              HA add-on repository manifest (this repo is the repository)
+compose.yaml                 standalone deployment (builds waterfall_alert/); guide in docs/docker.md
 waterfall_alert/             the add-on (Supervisor build context)
   config.yaml                add-on manifest: version, ingress, options/schema
   Dockerfile                 node:22-alpine, copies app/
@@ -37,6 +38,7 @@ waterfall_alert/             the add-on (Supervisor build context)
     test/tags.test.js        tag routes through createApi(), with a real Store and Engine
     test/transfer.test.js    CSV round trip into a fresh store, import modes, rollback on errors
 docs/csv.md                  user guide for the CSV format (linked from the Settings page)
+docs/docker.md               running without Home Assistant (Compose, backups, reverse proxy, networking)
 ```
 
 ## Commands
@@ -105,6 +107,7 @@ Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are j
 
 ## Conventions
 
+- **Two run modes.** As an HA add-on (`isAddon`: `SUPERVISOR_TOKEN` is set), ingress handles auth and `allowed()` in server.js limits direct port access. Standalone (Docker, `compose.yaml`) there is no auth at all, and HA features need `HA_URL`/`HA_TOKEN`. UI text about HA-specific things should check `api/info` → `addon`.
 - **No build step, no framework.** Frontend is ES modules served as-is. Keep it that way.
 - **All frontend URLs are relative** (`api/...`, `css/...`, hash routes). HA ingress serves the app under `/api/hassio_ingress/<token>/`, so a leading `/` breaks it.
 - Live updates are **polling** (`api/state?v=<version>` every 3s; the server returns `{unchanged: true}` when nothing changed). `engine.version` must be bumped on any state change visible to the UI.

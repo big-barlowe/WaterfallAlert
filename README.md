@@ -1,6 +1,6 @@
 # Waterfall Alert
 
-Hierarchical uptime monitoring for Home Assistant, as simple as Uptime Kuma, except it understands that **when the WAN is down, you don't need twenty alerts.**
+Hierarchical uptime monitoring for Home Assistant, or on its own with Docker. It's as simple as Uptime Kuma, except it understands that **when the WAN is down, you don't need twenty alerts.**
 
 Monitors form a hierarchy, like folders. Checks run top-down: if `Host 2` is unreachable, nothing beneath it gets checked, and you get **one** alert:
 
@@ -36,7 +36,11 @@ Other affected monitors (3):
 - **CSV import & export.** Move all your monitors to another install, or edit many at once in a spreadsheet. An export imports as it is. See the [CSV guide](docs/csv.md).
 - **Tags.** Coloured tags on each monitor, a tag filter for the list and the falls, and bulk tagging: shift-click or drag a box over monitors in the falls, then add or remove tags, optionally including everything downstream.
 
-## Install as a Home Assistant add-on
+## Install
+
+Waterfall Alert runs as a Home Assistant add-on, or on its own on any machine with Docker.
+
+### As a Home Assistant add-on
 
 1. In Home Assistant go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories**.
 2. Add `https://github.com/big-barlowe/WaterfallAlert`.
@@ -44,7 +48,28 @@ Other affected monitors (3):
 
 See [waterfall_alert/DOCS.md](waterfall_alert/DOCS.md) for configuration and usage details.
 
-## Run standalone (development)
+### With Docker (no Home Assistant needed)
+
+```sh
+git clone https://github.com/big-barlowe/WaterfallAlert.git
+cd WaterfallAlert
+docker compose up -d --build
+```
+
+Then open `http://<your-server>:8099`. Data is stored in `./data`. Every monitor type and notification channel works, except the two that talk to Home Assistant, which need a URL and access token if you want them.
+
+> **There is no login.** Under Home Assistant, HA handles sign-in. Run on its own, anyone who can reach the port can use the app. Keep it on a trusted network, or put it behind a reverse proxy that adds authentication.
+
+The **[Docker guide](docs/docker.md)** covers:
+- a compose file that builds straight from GitHub, without cloning
+- plain `docker run`
+- configuration (time zone, connecting to Home Assistant)
+- backups and updates
+- a reverse proxy with a login
+- networking (monitoring the Docker host itself, ping capabilities)
+- moving between the add-on and Docker
+
+## Development
 
 Requires Node.js ≥ 22.13 (for the built-in `node:sqlite`).
 
@@ -55,14 +80,7 @@ npm start            # http://localhost:8099, data in ./data
 npm test
 ```
 
-Or with Docker, no local Node needed:
-
-```sh
-docker build -t waterfall-alert waterfall_alert
-docker run --rm -p 8099:8099 -v "$PWD/data:/data" waterfall-alert
-```
-
-To use Home Assistant monitors and notifications outside the add-on, set `HA_URL` and `HA_TOKEN` (a long-lived access token).
+No local Node? `docker compose up -d --build` from the repository root runs your working copy.
 
 ## License
 

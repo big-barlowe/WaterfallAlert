@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1
+
+- Running without Home Assistant: new [Docker guide](https://github.com/big-barlowe/WaterfallAlert/blob/main/docs/docker.md) and a `compose.yaml` in the repository.
+- Outside Home Assistant, a push monitor's edit page shows its real push URL instead of the add-on placeholder.
+
 ## 0.5.0
 
 - **Import and export monitors as CSV** under **Settings → Import & export monitors**. Exports and imports use the same columns, so an export imports as it is into another install: the hierarchy, settings, tags (with colours), icons (uploaded ones included) and notification choices all come along.

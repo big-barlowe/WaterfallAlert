@@ -123,9 +123,10 @@ function downstream(childMap, start) {
 }
 
 export async function renderMonitorForm(root, { state, id, presetParent, navigate }) {
-  const [existing, notifications] = await Promise.all([
+  const [existing, notifications, info] = await Promise.all([
     id ? api(`monitors/${id}`) : null,
     api('notifications'),
+    api('info'),
   ]);
   const self = id ?? 'new';
   const draft = existing
@@ -279,10 +280,15 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
   const pushInfo = () => {
     if (!existing?.pushToken) return h('p', { class: 'help' }, 'Save the monitor to get its push URL.');
     const path = `api/push/${existing.pushToken}`;
+    // Under HA the page is served through ingress, so its address is no use
+    // to other services; standalone, it is exactly the right one.
+    const url = info.addon ? `http://<home-assistant-host>:<port>/${path}` : new URL(path, location.origin + location.pathname).href;
     return h('div', { class: 'push-info' },
       h('label', null, 'Push URL'),
-      h('code', null, `http://<home-assistant-host>:<port>/${path}?status=up&msg=OK&ping=`),
-      h('small', null, 'Map the add-on port under Settings → Add-ons → Waterfall Alert → Network to make this reachable. Add ?status=down to report a failure.'));
+      h('code', null, `${url}?status=up&msg=OK&ping=`),
+      h('small', null, info.addon
+        ? 'Map the add-on port under Settings → Add-ons → Waterfall Alert → Network to make this reachable. Add ?status=down to report a failure.'
+        : 'Whatever sends the pushes must be able to reach this address. Add ?status=down to report a failure.'));
   };
 
   const chipList = (ids, onRemove, empty) => ids.length
