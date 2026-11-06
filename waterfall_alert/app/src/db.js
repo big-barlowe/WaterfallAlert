@@ -89,6 +89,22 @@ const MIGRATIONS = [
     checked_at INTEGER NOT NULL
   );
   `,
+  // v3: tags (a name and a colour) and which monitors carry them.
+  `
+  CREATE TABLE tags (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    name  TEXT NOT NULL,
+    color TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX tags_name ON tags(name COLLATE NOCASE);
+
+  CREATE TABLE monitor_tags (
+    monitor_id INTEGER NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+    tag_id     INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (monitor_id, tag_id)
+  );
+  CREATE INDEX monitor_tags_tag ON monitor_tags(tag_id);
+  `,
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -291,6 +307,65 @@ export class Store {
 
   deleteIcon(monitorId) {
     this.q('DELETE FROM icons WHERE monitor_id = ?').run(monitorId);
+  }
+
+  // ---- tags ---------------------------------------------------------------
+
+  listTags() {
+    return this.q('SELECT id, name, color FROM tags ORDER BY name COLLATE NOCASE').all().map((t) => ({ ...t }));
+  }
+
+  getTag(id) {
+    const t = this.q('SELECT id, name, color FROM tags WHERE id = ?').get(id);
+    return t ? { ...t } : null;
+  }
+
+  findTagByName(name) {
+    const t = this.q('SELECT id, name, color FROM tags WHERE name = ? COLLATE NOCASE').get(name);
+    return t ? { ...t } : null;
+  }
+
+  createTag(t) {
+    return Number(this.q('INSERT INTO tags (name, color) VALUES (?, ?)').run(t.name, t.color).lastInsertRowid);
+  }
+
+  updateTag(id, t) {
+    this.q('UPDATE tags SET name = ?, color = ? WHERE id = ?').run(t.name, t.color, id);
+  }
+
+  deleteTag(id) {
+    this.q('DELETE FROM tags WHERE id = ?').run(id);
+  }
+
+  // monitor id -> [tag ids], in tag name order
+  monitorTagMap() {
+    const out = new Map();
+    const rows = this.q(
+      `SELECT mt.monitor_id AS monitorId, mt.tag_id AS tagId FROM monitor_tags mt
+       JOIN tags t ON t.id = mt.tag_id ORDER BY t.name COLLATE NOCASE`
+    ).all();
+    for (const r of rows) {
+      if (!out.has(r.monitorId)) out.set(r.monitorId, []);
+      out.get(r.monitorId).push(r.tagId);
+    }
+    return out;
+  }
+
+  monitorTagIds(monitorId) {
+    return this.q('SELECT tag_id AS id FROM monitor_tags WHERE monitor_id = ?').all(monitorId).map((r) => r.id);
+  }
+
+  setMonitorTags(monitorId, tagIds) {
+    this.q('DELETE FROM monitor_tags WHERE monitor_id = ?').run(monitorId);
+    for (const t of tagIds) this.tagMonitor(monitorId, t);
+  }
+
+  tagMonitor(monitorId, tagId) {
+    return this.q('INSERT OR IGNORE INTO monitor_tags (monitor_id, tag_id) VALUES (?, ?)').run(monitorId, tagId).changes;
+  }
+
+  untagMonitor(monitorId, tagId) {
+    return this.q('DELETE FROM monitor_tags WHERE monitor_id = ? AND tag_id = ?').run(monitorId, tagId).changes;
   }
 
   // ---- heartbeats ---------------------------------------------------------

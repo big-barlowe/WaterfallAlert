@@ -43,6 +43,16 @@ The dashboard diagram shows the whole hierarchy as streams: water flows from hea
 
 - **Click a monitor** to trace it: the diagram shows only what it depends on (upstream) and what depends on it (downstream). Click it again, press <kbd>Esc</kbd>, click empty space or use **Show all** to see everything. **Trace in Falls** on a monitor's page does the same.
 - **The expand button** (top-right corner of a monitor) opens a details panel with its status, response times, heartbeats and its full upstream and downstream lists. Click a monitor in those lists to trace that one instead.
+- **Select monitors** to tag several at once: shift-click (or ctrl/⌘-click) them, or drag a box over empty space. Shift-drag adds to the selection and <kbd>Alt</kbd>/<kbd>⌥</kbd>-drag removes from it. On a touch screen, tap **Select** first. See [Tags](#tags).
+
+## Tags
+
+Tags are coloured labels for grouping monitors across the hierarchy, for example by site, room or owner. They show as small pills along the bottom of each monitor in the Falls and as coloured dots in the monitor list.
+
+- **Filter:** click tags at the top of the sidebar to show only monitors with any of those tags, in both the list and the Falls. Monitors above a match stay visible, faded, so you can still see what the matches depend on.
+- **Tag one monitor:** use the Tags field in its settings, or **+ Add tags** in its details panel in the Falls. When you add a tag to a monitor that has dependents, you can also add it to everything downstream (handy for tagging a whole site).
+- **Tag many:** select monitors in the Falls (see above). The selection bar shows every tag: ✓ means all selected monitors have it (click to remove it), `2/5` means some do and `+` means none do (click to add it). Tick **Include downstream** to apply to everything below the selected monitors as well.
+- **Manage:** the **Tags** page lets you create, rename, recolour and delete tags. Deleting a tag only removes the label; monitors are not affected.
 
 ## Icons
 

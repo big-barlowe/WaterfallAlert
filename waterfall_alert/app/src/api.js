@@ -62,6 +62,17 @@ function normalizeMonitor(body, existing) {
   };
 }
 
+const TAG_COLOR = /^#[0-9a-f]{6}$/;
+
+function normalizeTag(body, existing) {
+  const name = String(body.name ?? existing?.name ?? '').trim().replace(/\s+/g, ' ');
+  if (!name) throw new HttpError(400, 'Tag name is required');
+  if (name.length > 32) throw new HttpError(400, 'Tag names can be at most 32 characters');
+  const color = String(body.color ?? existing?.color ?? '').toLowerCase();
+  if (!TAG_COLOR.test(color)) throw new HttpError(400, 'Tag colour must look like #38bdf8');
+  return { name, color };
+}
+
 // Builds the router. `ctx` = { store, engine, icons }.
 export function createApi({ store, engine, icons }) {
   const routes = [];
@@ -102,6 +113,26 @@ export function createApi({ store, engine, icons }) {
     return null;
   };
 
+  const tagIdsFrom = (v) => {
+    const ids = idList(v);
+    if (!ids) return undefined;
+    const known = new Set(store.listTags().map((t) => t.id));
+    if (ids.some((t) => !known.has(t))) throw new HttpError(400, 'Unknown tag');
+    return ids;
+  };
+
+  // Set a monitor's tags; with `downstream`, tags it didn't have before are
+  // also added to everything below it.
+  const applyMonitorTags = (id, tagIds, downstream) => {
+    if (!tagIds) return;
+    const before = new Set(store.monitorTagIds(id));
+    store.setMonitorTags(id, tagIds);
+    const added = tagIds.filter((t) => !before.has(t));
+    if (!downstream || !added.length) return;
+    const graph = new Graph(store.listMonitors().map((m) => m.id), store.listEdges());
+    for (const d of graph.descendants(id)) for (const t of added) store.tagMonitor(d, t);
+  };
+
   const iconsChanged = (id) => icons.sync(store.listMonitors(), id == null ? [] : [id]);
 
   const monitorDetail = (m) => ({
@@ -109,6 +140,7 @@ export function createApi({ store, engine, icons }) {
     parentIds: engine.graph.parentsOf(m.id),
     childIds: engine.graph.childrenOf(m.id),
     notificationIds: store.monitorNotificationIds(m.id),
+    tagIds: store.monitorTagIds(m.id),
   });
 
   route('GET', '/api/info', () => ({ version: VERSION, addon: isAddon, directAccess: config.allowDirectAccess }));
@@ -116,7 +148,12 @@ export function createApi({ store, engine, icons }) {
   route('GET', '/api/state', ({ query }) => {
     if (query.v && Number(query.v) === engine.version) return { version: engine.version, unchanged: true };
     const snap = engine.snapshot();
-    for (const m of snap.monitors) m.icon = icons.describe(engine.monitors.get(m.id));
+    const tagMap = store.monitorTagMap();
+    for (const m of snap.monitors) {
+      m.icon = icons.describe(engine.monitors.get(m.id));
+      m.tags = tagMap.get(m.id) ?? [];
+    }
+    snap.tags = store.listTags();
     return snap;
   });
 
@@ -131,9 +168,11 @@ export function createApi({ store, engine, icons }) {
     const upload = iconUpload(body, data, null);
     const parentIds = idList(body.parentIds) ?? [];
     const childIds = idList(body.childIds) ?? [];
+    const tagIds = tagIdsFrom(body.tagIds);
     const id = store.tx(() => {
       const newId = store.createMonitor(data);
       applyEdges(newId, parentIds, childIds);
+      applyMonitorTags(newId, tagIds, body.tagsDownstream);
       const notif = idList(body.notificationIds) ?? store.listNotifications().filter((n) => n.isDefault).map((n) => n.id);
       store.setMonitorNotifications(newId, notif);
       return newId;
@@ -150,10 +189,12 @@ export function createApi({ store, engine, icons }) {
     const upload = iconUpload(body, data, existing.id);
     const parentIds = idList(body.parentIds);
     const childIds = idList(body.childIds);
+    const tagIds = tagIdsFrom(body.tagIds);
     const oldChildren = engine.graph.childrenOf(existing.id);
     store.tx(() => {
       store.updateMonitor(existing.id, data);
       applyEdges(existing.id, parentIds, childIds);
+      applyMonitorTags(existing.id, tagIds, body.tagsDownstream);
       const notif = idList(body.notificationIds);
       if (notif) store.setMonitorNotifications(existing.id, notif);
     });
@@ -238,6 +279,64 @@ export function createApi({ store, engine, icons }) {
     const now = Date.now();
     const pick = (since) => store.uptimeSince(since).get(m.id) ?? { uptime: null, avgPing: null };
     return { day: pick(now - 86400000), week: pick(now - 7 * 86400000), month: pick(now - 30 * 86400000) };
+  });
+
+  // ---- tags ----------------------------------------------------------------
+
+  const tagOr404 = (id) => {
+    const t = store.getTag(Number(id));
+    if (!t) throw new HttpError(404, 'Tag not found');
+    return t;
+  };
+
+  const uniqueTagName = (name, id) => {
+    const clash = store.findTagByName(name);
+    if (clash && clash.id !== id) throw new HttpError(400, `There is already a tag called "${clash.name}"`);
+  };
+
+  route('GET', '/api/tags', () => {
+    const counts = new Map();
+    for (const ids of store.monitorTagMap().values()) for (const t of ids) counts.set(t, (counts.get(t) ?? 0) + 1);
+    return store.listTags().map((t) => ({ ...t, count: counts.get(t.id) ?? 0 }));
+  });
+
+  route('POST', '/api/tags', ({ body }) => {
+    const t = normalizeTag(body);
+    uniqueTagName(t.name, null);
+    const id = store.createTag(t);
+    engine.touch();
+    return store.getTag(id);
+  });
+
+  route('PUT', '/api/tags/:id', ({ params, body }) => {
+    const existing = tagOr404(params.id);
+    const t = normalizeTag(body, existing);
+    uniqueTagName(t.name, existing.id);
+    store.updateTag(existing.id, t);
+    engine.touch();
+    return store.getTag(existing.id);
+  });
+
+  route('DELETE', '/api/tags/:id', ({ params }) => {
+    store.deleteTag(tagOr404(params.id).id);
+    engine.touch();
+    return { ok: true };
+  });
+
+  // Add (or with remove=true, take off) a tag on several monitors at once,
+  // optionally including everything downstream of them.
+  route('POST', '/api/tags/:id/apply', ({ params, body }) => {
+    const tag = tagOr404(params.id);
+    const ids = idList(body.monitorIds) ?? [];
+    if (ids.some((id) => !engine.monitors.has(id))) throw new HttpError(400, 'Unknown monitor');
+    const targets = new Set(ids);
+    if (body.downstream) for (const id of ids) for (const d of engine.graph.descendants(id)) targets.add(d);
+    let changed = 0;
+    store.tx(() => {
+      for (const id of targets) changed += body.remove ? store.untagMonitor(id, tag.id) : store.tagMonitor(id, tag.id);
+    });
+    if (changed) engine.touch();
+    return { ok: true, changed, monitors: targets.size };
   });
 
   // ---- notifications ------------------------------------------------------

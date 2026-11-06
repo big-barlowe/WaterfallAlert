@@ -6,5 +6,6 @@ Hierarchical uptime monitoring: monitors are arranged like folders, checked top-
 - Multiple parents per monitor, drag-and-drop editing
 - Click a monitor in the falls diagram to trace its upstream and downstream
 - Monitor icons: automatic favicons, built-in icons, emoji, image URL or upload
+- Coloured tags with filtering, and bulk tagging by selecting monitors in the falls diagram
 - Uptime Kuma-style heartbeat history and response-time charts
 - Notifications via Home Assistant, ntfy, Discord, Slack, Telegram, Pushover, Gotify, webhook or email

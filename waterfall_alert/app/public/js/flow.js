@@ -3,12 +3,15 @@ import { iconSvg } from './icons.js';
 
 const NODE_W = 184;
 const NODE_H = 56;
+const TAGGED_H = 70; // every node gets a tag row once any shown node has tags
 const SLOT_W = 204;
 const LEVEL_H = 112;
 const PAD = 28;
 const SOURCE_H = 70;
 const BADGE = { cx: 26, cy: 28, r: 15 };
 const TEXT_X = 50;
+const TAG = { x: 12, y: 52, h: 13, pad: 5, gap: 4 };
+const TAG_FONT = '600 9px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
@@ -37,7 +40,7 @@ export function lineage(monitors, id) {
 // Layered "waterfall" layout: roots at the top, every child strictly below
 // all of its parents. Each node hangs under its deepest parent (its
 // "primary" parent) for a tidy tree; extra parents get secondary streams.
-function layout(monitors) {
+function layout(monitors, nodeH) {
   const byId = new Map(monitors.map((m) => [m.id, m]));
   const level = new Map();
   const levelOf = (id) => {
@@ -88,7 +91,7 @@ function layout(monitors) {
     roots,
     primary,
     width: PAD * 2 + Math.max(1, next) * SLOT_W - (SLOT_W - NODE_W),
-    height: PAD * 2 + SOURCE_H + maxLevel * LEVEL_H + NODE_H,
+    height: PAD * 2 + SOURCE_H + maxLevel * LEVEL_H + nodeH,
   };
 }
 
@@ -113,6 +116,49 @@ const glowFilter = (id, region) => svg('filter', { id, ...region },
 const truncate = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const iconKey = (i) => (i ? `${i.kind}:${i.src ?? i.name ?? i.value}` : '');
 
+let measureCtx;
+function textWidth(s) {
+  measureCtx ??= document.createElement('canvas').getContext('2d');
+  measureCtx.font = TAG_FONT;
+  return measureCtx.measureText(s).width;
+}
+
+function fitText(s, width) {
+  if (textWidth(s) <= width) return s;
+  let n = s.length;
+  while (n > 1 && textWidth(`${s.slice(0, n)}…`) > width) n--;
+  return `${s.slice(0, n)}…`;
+}
+
+// A row of tag pills along the bottom of a node; whatever doesn't fit
+// becomes "+N" (the node's tooltip lists every tag).
+function tagRow(tags) {
+  const g = svg('g', { class: 'node-tags' });
+  const right = NODE_W - TAG.x;
+  const pill = (x, label, color) => {
+    const w = textWidth(label) + TAG.pad * 2;
+    g.append(svg('g', { class: `tag${color ? '' : ' more'}`, style: color ? `--tag:${color}` : null },
+      svg('rect', { x, y: TAG.y, width: w, height: TAG.h, rx: TAG.h / 2 }),
+      svg('text', { x: x + w / 2, y: TAG.y + TAG.h / 2 + 0.5, 'text-anchor': 'middle', 'dominant-baseline': 'central' }, label)));
+    return x + w + TAG.gap;
+  };
+  let x = TAG.x;
+  for (let i = 0; i < tags.length; i++) {
+    const left = tags.length - i - 1;
+    const reserve = left ? textWidth(`+${left}`) + TAG.pad * 2 + TAG.gap : 0;
+    const room = right - x - reserve - TAG.pad * 2;
+    if (textWidth(tags[i].name) <= room) {
+      x = pill(x, tags[i].name, tags[i].color);
+    } else if (i === 0 || room > 36) {
+      x = pill(x, fitText(tags[i].name, room), tags[i].color);
+    } else {
+      pill(x, `+${left + 1}`, null);
+      break;
+    }
+  }
+  return g;
+}
+
 function subline(m) {
   if (m.type === 'group') return `Group · ${m.children.length} inside`;
   if (m.status === 'blocked') return 'Blocked upstream';
@@ -123,19 +169,29 @@ function subline(m) {
 }
 
 // Callbacks: onSelect(id) when a node is clicked, onExpand(id) for its
-// expand button, onClear() for a click on empty water.
+// expand button, onClear() for a click on empty water, onToggle(id) for a
+// shift/ctrl/⌘-click (or any click in select mode) and onMarquee(ids) with
+// the new selection after dragging a box over empty water.
 export class FlowView {
-  constructor(container, { onSelect, onExpand, onClear }) {
+  constructor(container, { onSelect, onExpand, onClear, onToggle, onMarquee }) {
     this.container = container;
     this.onSelect = onSelect;
     this.onExpand = onExpand;
     this.onClear = onClear;
+    this.onToggle = onToggle;
+    this.onMarquee = onMarquee;
     this.topology = null;
     this.nodeEls = new Map();
+    this.selected = new Set();
+    this.selectMode = false;
   }
 
   // With `focusId`, only that monitor's upstream and downstream are drawn.
-  render(monitors, focusId = null) {
+  // Monitors may carry `tagList` ([{name, color}]) and `context` (shown only
+  // because something below them matches the filter; drawn faded).
+  render(monitors, focusId = null, { selected = new Set(), selectMode = false } = {}) {
+    this.selected = selected;
+    this.selectMode = selectMode;
     if (!monitors.length) {
       fill(this.container);
       this.topology = null;
@@ -150,7 +206,7 @@ export class FlowView {
       const keep = new Set([focus, ...rel.up.keys(), ...rel.down.keys()]);
       shown = monitors.filter((m) => keep.has(m.id)).map((m) => ({ ...m, parents: m.parents.filter((p) => keep.has(p)), allParents: m.parents }));
     }
-    const key = JSON.stringify([focus, shown.map((m) => [m.id, m.name, m.parents, iconKey(m.icon)])]);
+    const key = JSON.stringify([focus, shown.map((m) => [m.id, m.name, m.parents, iconKey(m.icon), m.tagList?.map((t) => t.name + t.color)])]);
     if (key !== this.topology) this.#build(shown, key, focus, rel);
     this.#paint(monitors);
   }
@@ -160,7 +216,9 @@ export class FlowView {
     const before = new Map([...this.nodeEls].map(([id, n]) => [id, n.pool.getBoundingClientRect()]));
 
     this.topology = key;
-    const { pos, roots, width, height } = layout(monitors);
+    const nodeH = monitors.some((m) => m.tagList?.length) ? TAGGED_H : NODE_H;
+    const { pos, roots, width, height } = layout(monitors, nodeH);
+    this.boxes = new Map([...pos].map(([id, p]) => [id, { ...p, w: NODE_W, h: nodeH }]));
     const srcX = (Math.min(...roots.map((r) => pos.get(r).x)) + Math.max(...roots.map((r) => pos.get(r).x))) / 2 + NODE_W / 2;
     const srcY = PAD + 14;
 
@@ -187,7 +245,7 @@ export class FlowView {
       for (const parentId of m.parents) {
         const p = pos.get(parentId);
         if (!p) continue;
-        addEdge(parentId, m.id, curve(p.x + NODE_W / 2, p.y + NODE_H, c.x + NODE_W / 2, c.y));
+        addEdge(parentId, m.id, curve(p.x + NODE_W / 2, p.y + nodeH, c.x + NODE_W / 2, c.y));
       }
     }
 
@@ -195,7 +253,7 @@ export class FlowView {
       const { x, y } = pos.get(m.id);
       const title = svg('title');
       const sub = svg('text', { class: 'sub', x: TEXT_X, y: 42 });
-      const pool = svg('rect', { class: 'pool', width: NODE_W, height: NODE_H, rx: 14 });
+      const pool = svg('rect', { class: 'pool', width: NODE_W, height: nodeH, rx: 14 });
       const parentCount = (m.allParents ?? m.parents).length;
       const role = m.id === focus ? ' focused' : rel?.up.has(m.id) ? ' upstream' : rel?.down.has(m.id) ? ' downstream' : '';
       const expand = svg('g', {
@@ -221,6 +279,7 @@ export class FlowView {
 
       const inner = svg('g', { class: 'node-inner' },
         title,
+        svg('rect', { class: 'sel-ring', x: -4, y: -4, width: NODE_W + 8, height: nodeH + 8, rx: 18 }),
         pool,
         svg('g', { class: `node-badge${m.icon ? ` kind-${m.icon.kind}` : ''}` },
           svg('circle', { class: 'ring-ripple', cx: BADGE.cx, cy: BADGE.cy, r: BADGE.r }),
@@ -229,7 +288,12 @@ export class FlowView {
         svg('text', { class: 'name', x: TEXT_X, y: 24 }, truncate(m.name, 17)),
         sub,
         parentCount > 1 ? svg('text', { class: 'multi', x: NODE_W - 12, y: 42, 'text-anchor': 'end' }, `⑂${parentCount}`) : null,
+        m.tagList?.length ? tagRow(m.tagList) : null,
+        svg('g', { class: 'sel-mark', transform: 'translate(2,2)', 'aria-hidden': 'true' },
+          svg('circle', { r: 8 }),
+          svg('path', { d: 'M-3.5 0.2L-1 2.7L3.6 -2.2' })),
         expand);
+      const toggle = (e) => e.shiftKey || e.metaKey || e.ctrlKey || this.selectMode;
       const g = svg('g', {
         class: 'node',
         transform: `translate(${x},${y})`,
@@ -237,15 +301,16 @@ export class FlowView {
         role: 'button',
         'aria-pressed': String(m.id === focus),
         'aria-label': m.id === focus ? `${m.name}, focused. Activate to show everything.` : `Focus on ${m.name}`,
-        onclick: () => this.onSelect(m.id),
+        onclick: (e) => (toggle(e) ? this.onToggle(m.id) : this.onSelect(m.id)),
         onkeydown: (e) => {
           if (e.key !== 'Enter' && e.key !== ' ') return;
           e.preventDefault();
-          this.onSelect(m.id);
+          if (toggle(e)) this.onToggle(m.id);
+          else this.onSelect(m.id);
         },
       }, inner);
       nodes.append(g);
-      this.nodeEls.set(m.id, { g, inner, pool, title, sub, role });
+      this.nodeEls.set(m.id, { g, inner, pool, title, sub, role, tags: m.tagList ?? [] });
     }
 
     const source = svg('g', { class: 'source' },
@@ -260,8 +325,13 @@ export class FlowView {
       role: 'group',
       'aria-label': 'Monitor hierarchy flow diagram',
       onclick: (e) => {
+        if (this.suppressClick) {
+          this.suppressClick = false;
+          return;
+        }
         if (!e.target.closest('.node')) this.onClear();
       },
+      onpointerdown: (e) => this.#marquee(e),
     },
     svg('defs', {},
       // Streams need a user-space region: a bounding-box one is zero-wide on
@@ -270,12 +340,72 @@ export class FlowView {
       glowFilter('glow-box', { x: '-50%', y: '-50%', width: '200%', height: '200%' })),
     edges, nodes, source);
     fill(this.container, root);
+    this.svgEl = root;
 
     if (focus != null) {
       const p = pos.get(focus);
       this.container.scrollLeft = p.x + NODE_W / 2 - this.container.clientWidth / 2;
     }
     if (before.size && !reducedMotion()) this.#animate(before, edges);
+  }
+
+  #point(e) {
+    const p = this.svgEl.createSVGPoint();
+    p.x = e.clientX;
+    p.y = e.clientY;
+    return p.matrixTransform(this.svgEl.getScreenCTM().inverse());
+  }
+
+  // Drag a box over empty water to select the nodes it touches. Shift (or
+  // ctrl/⌘) adds to the selection, Alt/⌥ takes away from it.
+  #marquee(e) {
+    this.suppressClick = false;
+    if (e.button !== 0 || e.target.closest('.node')) return;
+    if (e.pointerType === 'touch' && !this.selectMode) return; // touch drags scroll
+    const svgEl = this.svgEl;
+    const start = this.#point(e);
+    const mode = e.altKey ? 'remove' : e.shiftKey || e.metaKey || e.ctrlKey ? 'add' : 'replace';
+    const base = new Set(this.selected);
+    let rect = null;
+    let result = base;
+    const move = (ev) => {
+      const p = this.#point(ev);
+      if (!rect) {
+        if (Math.hypot(p.x - start.x, p.y - start.y) < 5) return;
+        rect = svg('rect', { class: 'marquee', rx: 4 });
+        svgEl.append(rect);
+        try {
+          svgEl.setPointerCapture(ev.pointerId); // keep the drag going outside the diagram
+        } catch {
+          // pointer already gone
+        }
+      }
+      const box = { x: Math.min(p.x, start.x), y: Math.min(p.y, start.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
+      rect.setAttribute('x', box.x);
+      rect.setAttribute('y', box.y);
+      rect.setAttribute('width', box.w);
+      rect.setAttribute('height', box.h);
+      const hits = [...this.boxes].filter(([, b]) => b.x < box.x + box.w && b.x + b.w > box.x && b.y < box.y + box.h && b.y + b.h > box.y).map(([id]) => id);
+      result = mode === 'replace' ? new Set(hits) : new Set(base);
+      for (const id of hits) {
+        if (mode === 'remove') result.delete(id);
+        else result.add(id);
+      }
+      for (const [id, n] of this.nodeEls) n.g.classList.toggle('selected', result.has(id));
+    };
+    const end = (ev) => {
+      svgEl.removeEventListener('pointermove', move);
+      svgEl.removeEventListener('pointerup', end);
+      svgEl.removeEventListener('pointercancel', end);
+      if (!rect) return;
+      rect.remove();
+      this.suppressClick = ev.type === 'pointerup';
+      this.onMarquee([...result]);
+    };
+    svgEl.addEventListener('pointermove', move);
+    svgEl.addEventListener('pointerup', end);
+    svgEl.addEventListener('pointercancel', end);
+    e.preventDefault(); // no text selection while dragging
   }
 
   // FLIP: start each surviving node where it was and let it glide into place;
@@ -306,12 +436,14 @@ export class FlowView {
       const child = byId.get(childId);
       g.setAttribute('class', `stream ${state} to-${child?.status}`);
     }
-    for (const [id, { g, title, sub, role }] of this.nodeEls) {
+    this.svgEl?.classList.toggle('selecting', this.selectMode);
+    for (const [id, { g, title, sub, role, tags }] of this.nodeEls) {
       const m = byId.get(id);
       if (!m) continue;
-      g.setAttribute('class', `node ${m.status} type-${m.type}${role}`);
+      const sel = this.selected.has(id) ? ' selected' : '';
+      g.setAttribute('class', `node ${m.status} type-${m.type}${role}${sel}${m.context ? ' context' : ''}`);
       sub.textContent = subline(m);
-      title.textContent = `${m.name} — ${STATUS_LABEL[m.status]}${m.msg ? `\n${m.msg}` : ''}`;
+      title.textContent = `${m.name} — ${STATUS_LABEL[m.status]}${m.msg ? `\n${m.msg}` : ''}${tags.length ? `\nTags: ${tags.map((t) => t.name).join(', ')}` : ''}`;
     }
   }
 }

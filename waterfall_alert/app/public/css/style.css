@@ -423,6 +423,111 @@ button.chip { font: inherit; font-size: 0.85rem; cursor: pointer; }
 .empty { text-align: center; padding: 28px 12px; color: var(--muted); }
 .empty p { max-width: 460px; margin: 0 auto 14px; }
 
+/* ---- tags ------------------------------------------------------------------ */
+.tag-pill {
+  --tag: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--tag) 45%, white);
+  background: color-mix(in srgb, var(--tag) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--tag) 55%, transparent);
+}
+.tag-pill .tag-name { overflow: hidden; text-overflow: ellipsis; }
+button.tag-pill { cursor: pointer; }
+button.tag-pill:hover { border-color: var(--tag); background: color-mix(in srgb, var(--tag) 28%, transparent); }
+.tag-pill.on { color: #fff; border-color: var(--tag); background: color-mix(in srgb, var(--tag) 40%, transparent); }
+.tag-pill.off { opacity: 0.45; }
+.tag-pill.off:hover { opacity: 0.8; }
+.tag-x { border: 0; background: none; color: inherit; font: inherit; font-size: 0.9rem; line-height: 1; padding: 0 0 0 2px; cursor: pointer; opacity: 0.7; }
+.tag-x:hover { opacity: 1; }
+.linkish { font: inherit; font-size: 0.78rem; background: none; border: 0; padding: 2px 4px; color: var(--water); cursor: pointer; }
+.linkish:hover { color: var(--foam); }
+
+.tag-filter { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin: 0 0 10px; }
+.tag-filter-label { font-size: 0.7rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.06em; margin-right: 2px; }
+.row-tags { display: inline-flex; gap: 3px; flex: none; }
+.tag-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--tag); }
+.row.context .row-main { opacity: 0.5; }
+
+.info-tags, .detail-tags { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.detail-tags { margin-top: 8px; }
+.tag-edit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tag-edit .adder { width: auto; max-width: 200px; padding: 4px 8px; font-size: 0.85rem; }
+.stack-sm { display: flex; flex-direction: column; gap: 10px; }
+
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.swatch { width: 22px; height: 22px; border-radius: 50%; background: var(--tag); border: 0; padding: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25); }
+.swatch:hover { transform: scale(1.1); }
+.swatch.on { outline: 2px solid var(--text); outline-offset: 2px; }
+.swatch-custom { width: 30px; height: 24px; padding: 0 2px; border-radius: 6px; cursor: pointer; }
+
+.tag-list { padding-block: 4px; }
+.tag-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px 18px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
+.tag-item:last-child { border-bottom: 0; }
+.tag-item-name { display: flex; gap: 10px; align-items: center; min-width: 0; }
+.tag-item-name .tag-pill { flex: none; max-width: 45%; }
+.tag-item-name input { max-width: 240px; padding: 6px 10px; }
+.tag-item-meta { display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
+@media (max-width: 900px) {
+  .tag-item { grid-template-columns: minmax(0, 1fr); }
+  .tag-item-meta { justify-content: flex-start; }
+}
+
+/* tags and selection in the falls */
+.falls-tools { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; }
+#select-toggle[aria-pressed="true"] { border-color: var(--water); background: rgba(56, 189, 248, 0.18); }
+.filter-chip { gap: 6px; padding: 2px 4px 2px 5px; }
+.filter-chip .chip-x { width: 18px; height: 18px; }
+.flow-select {
+  position: sticky;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--panel-solid) 92%, var(--water));
+  border: 1px solid rgba(56, 189, 248, 0.4);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  animation: sel-in 0.2s ease-out;
+}
+@keyframes sel-in { from { opacity: 0; transform: translateY(8px); } }
+.sel-head { display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; }
+.sel-head .btn { margin-left: auto; }
+.sel-down { padding: 0; font-size: 0.85rem; }
+.sel-down input { margin-top: 2px; }
+.sel-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sel-tag { font-size: 0.8rem; padding: 3px 4px 3px 10px; gap: 6px; }
+.sel-tag.none { opacity: 0.7; }
+.sel-tag.none:hover { opacity: 1; }
+.tag-state { font-size: 0.7rem; min-width: 18px; text-align: center; padding: 2px 5px; border-radius: 999px; background: rgba(4, 17, 31, 0.5); font-variant-numeric: tabular-nums; }
+
+.flow-svg { user-select: none; -webkit-user-select: none; }
+.flow-svg.selecting { touch-action: none; }
+.flow-svg .node-tags .tag rect { fill: color-mix(in srgb, var(--tag) 22%, var(--panel-solid)); stroke: color-mix(in srgb, var(--tag) 70%, transparent); stroke-width: 1; }
+.flow-svg .node-tags .tag text { fill: color-mix(in srgb, var(--tag) 40%, white); font: 600 9px var(--font); }
+.flow-svg .node-tags .tag.more rect { fill: var(--panel-2); stroke: var(--border); }
+.flow-svg .node-tags .tag.more text { fill: var(--muted); }
+.flow-svg .node.context { opacity: 0.42; }
+.flow-svg .node.context:hover { opacity: 0.75; }
+.flow-svg .sel-ring { pointer-events: none; fill: none; stroke: var(--foam); stroke-width: 1.5; stroke-dasharray: 5 4; opacity: 0; }
+.flow-svg .sel-mark { opacity: 0; pointer-events: none; }
+.flow-svg .sel-mark circle { fill: var(--water); stroke: var(--panel-solid); stroke-width: 2; }
+.flow-svg .sel-mark path { fill: none; stroke: var(--bg); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.flow-svg .node.selected .sel-ring, .flow-svg .node.selected .sel-mark { opacity: 1; }
+.flow-svg .marquee { fill: rgba(56, 189, 248, 0.1); stroke: var(--water); stroke-width: 1; stroke-dasharray: 4 3; pointer-events: none; }
+
 /* ---- tables ---------------------------------------------------------------- */
 .table-scroll { overflow-x: auto; }
 table.events { width: 100%; border-collapse: collapse; font-size: 0.86rem; }

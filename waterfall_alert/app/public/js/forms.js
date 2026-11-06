@@ -1,5 +1,6 @@
 import { api, h, toast, TYPE_LABEL, fill } from './util.js';
 import { GLYPHS, iconEl, glyphPreview } from './icons.js';
+import { tagPill, newTagDialog } from './tags.js';
 
 const TYPE_FIELDS = {
   group: [],
@@ -150,6 +151,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
   const typeBox = h('div');
   const iconBox = h('div', { class: 'field icon-field' });
   const hierarchyBox = h('div');
+  const tagsBox = h('div', { class: 'field' });
 
   const renderType = () => {
     fill(typeBox, 
@@ -299,6 +301,56 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
   h('option', { value: '' }, label),
   candidates.map((m) => h('option', { value: m.id }, m.name)));
 
+  // Tags. Newly added ones can also go on everything downstream.
+  draft.tagIds ??= [];
+  const tags = [...state.tags];
+  let tagsDownstream = false;
+  const addedTags = () => draft.tagIds.filter((t) => !(existing?.tagIds ?? []).includes(t));
+  const renderTags = () => {
+    const byId = new Map(tags.map((t) => [t.id, t]));
+    const others = tags.filter((t) => !draft.tagIds.includes(t.id));
+    const added = addedTags().map((t) => byId.get(t)?.name).filter(Boolean);
+    fill(tagsBox,
+      h('label', { for: 'f-tag-add' }, 'Tags'),
+      h('div', { class: 'tag-edit' },
+        draft.tagIds.map((t) => byId.get(t)).filter(Boolean).map((t) => tagPill(t, {
+          extra: h('button', {
+            type: 'button',
+            class: 'tag-x',
+            'aria-label': `Remove tag ${t.name}`,
+            onclick: () => {
+              draft.tagIds = draft.tagIds.filter((x) => x !== t.id);
+              renderTags();
+            },
+          }, '×'),
+        })),
+        h('select', {
+          id: 'f-tag-add',
+          class: 'adder',
+          onchange: (e) => {
+            const v = e.target.value;
+            if (v === 'new') {
+              newTagDialog(tags, (tag) => {
+                tags.push(tag);
+                draft.tagIds.push(tag.id);
+                renderTags();
+              });
+              e.target.value = '';
+              return;
+            }
+            if (v) draft.tagIds.push(Number(v));
+            renderTags();
+          },
+        },
+        h('option', { value: '' }, '+ Add tag…'),
+        others.map((t) => h('option', { value: t.id }, t.name)),
+        h('option', { value: 'new' }, 'New tag…'))),
+      draft.childIds.length && added.length ? h('label', { class: 'check' },
+        h('input', { type: 'checkbox', checked: tagsDownstream, onchange: (e) => { tagsDownstream = e.target.checked; } }),
+        h('span', null, `Also add ${added.join(', ')} to everything downstream of this monitor`)) : null,
+      h('small', null, 'Tags group monitors across the hierarchy (by site, owner…). Filter by them in the sidebar.'));
+  };
+
   const renderHierarchy = () => {
     const map = childMapWithDraft();
     const below = downstream(map, self);
@@ -337,6 +389,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
             renderHierarchy();
           }))),
       h('p', { class: 'help' }, 'These stay in sync: adding a parent here lists this monitor as that parent’s dependent, and vice versa. Monitors that would create a loop are hidden.'));
+    renderTags(); // the "also downstream" option depends on having dependents
   };
 
   const num = (key, label, help, min) => h('div', { class: 'field' },
@@ -367,7 +420,8 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       h('div', { class: 'field' },
         h('label', { for: 'f-desc' }, 'Description (optional)'),
         h('input', { id: 'f-desc', value: draft.description, oninput: (e) => { draft.description = e.target.value; } })),
-      iconBox),
+      iconBox,
+      tagsBox),
     h('section', null,
       h('h3', null, 'Hierarchy'),
       hierarchyBox),
@@ -409,6 +463,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
     if (mode === 'url' && !memo.url) return toast('Enter an image URL for the icon, or pick another option', 'error');
     if (mode === 'upload' && !draft.iconData && existing?.icon !== 'upload') return toast('Choose an image to upload for the icon', 'error');
     if (mode !== 'upload') delete draft.iconData;
+    draft.tagsDownstream = tagsDownstream && addedTags().length > 0;
     for (const f of TYPE_FIELDS[draft.type]) if (f.def && draft.config[f.key] == null) draft.config[f.key] = f.def;
     try {
       const saved = await api(existing ? `monitors/${existing.id}` : 'monitors', {

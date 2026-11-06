@@ -24,11 +24,14 @@ waterfall_alert/             the add-on (Supervisor build context)
       js/app.js              router, polling, sidebar tree (drag/drop), views
       js/flow.js             SVG "falls" diagram, focus/lineage view, FLIP animation
       js/icons.js            built-in glyphs, iconEl() (HTML) / iconSvg() (inside the diagram)
+      js/tags.js             tag pill, colour picker, "new tag" dialog
       js/chart.js            heartbeat bar + response-time chart
       js/forms.js            monitor + notification forms
       js/util.js             api(), h()/svg()/fill() DOM helpers, formatters
     test/engine.test.js      node:test scenarios for the hierarchy logic
     test/icons.test.js       favicon discovery and icon cache, with a fake `request`
+    test/minecraft.test.js   Server List Ping against a fake server, SRV resolution
+    test/tags.test.js        tag routes through createApi(), with a real Store and Engine
 ```
 
 ## Commands
@@ -70,9 +73,19 @@ Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are j
 - Images are served from `api/monitors/:id/icon` with a sandboxing CSP, because SVGs come from arbitrary sites and the add-on shares Home Assistant's origin. Keep those headers. Types are sniffed from bytes (`sniffImage`), never from Content-Type.
 - Built-in glyph keys are stored in the database, so never rename one in `public/js/icons.js`. Adding one is fine.
 
+## Tags
+
+- `tags(id, name, color)` (names unique, case-insensitive) and `monitor_tags`. Tags have nothing to do with checking; they are display and filtering only, so tag changes call `engine.touch()`, not `reload()`.
+- `/api/state` carries `tags` (all of them) and each monitor's `tags` (ids). `POST api/tags/:id/apply {monitorIds, downstream, remove}` is the bulk path; monitor POST/PUT take `tagIds` and `tagsDownstream` (adds only the *newly added* tags to every descendant).
+- Tag filter (`ui.tagFilter`, in localStorage): `filterView()` in app.js returns `match` (monitors with any selected tag) and `show` (match + all ancestors). Ancestors that don't match get `.context` and are drawn faded, in both the tree and the Falls.
+- Tag colours are set per element with the `--tag` custom property and mixed with `color-mix()` in CSS. `h()` routes `--*` style keys through `style.setProperty`.
+
 ## Falls diagram (flow.js)
 
-- `render(monitors, focusId)`: with a focus, only `lineage()` (ancestors + descendants) is laid out. The structure is rebuilt only when the topology key changes (ids, names, edges, icons, focus); `#paint` updates status classes in place so animations don't restart.
+- `render(monitors, focusId, {selected, selectMode})`: with a focus, only `lineage()` (ancestors + descendants) is laid out. The structure is rebuilt only when the topology key changes (ids, names, edges, icons, tags, focus); `#paint` updates status, selection and `.context` classes in place so animations don't restart.
+- Monitors passed in carry `tagList` (`[{name, color}]`) and `context`. When any shown node has tags, every node grows to `TAGGED_H` for a row of pills (widths measured on a canvas; overflow becomes `+N`).
+- Selection (`ui.selected`) is owned by app.js and pruned to the nodes on screen. Shift/ctrl/⌘-click or select mode → `onToggle`; dragging on empty water draws a marquee (`#marquee`, mouse/pen only unless select mode, which also sets `touch-action: none`) → `onMarquee(ids)`. The click that ends a drag is swallowed via `suppressClick`.
+- The selection bar sits *below* the diagram and is sticky, so showing it never moves the nodes (it used to be above, and the jump made box-selecting a second time miss).
 - On a rebuild, surviving nodes FLIP from their old screen position. They are positioned via the outer `g`'s `transform` attribute and animated via CSS transforms on the inner `.node-inner`, because a CSS transform on the outer one would override the attribute.
 - Focus state lives in `ui.focus`/`ui.info` in app.js and is mirrored into the hash with `history.replaceState`. A real hash change would re-route and rebuild the diagram without the animation.
 - Two glow filters: `#glow` (user space) for streams, since a bounding-box region is zero-wide on a vertical path, and `#glow-box` for elements inside a translated node.
