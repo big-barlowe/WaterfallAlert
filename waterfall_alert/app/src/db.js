@@ -251,6 +251,10 @@ export class Store {
     this.db.prepare(`UPDATE monitors SET ${sets.join(', ')} WHERE id = ?`).run(...vals, id);
   }
 
+  setPushToken(id, token) {
+    this.q('UPDATE monitors SET push_token = ? WHERE id = ?').run(token, id);
+  }
+
   deleteMonitor(id) {
     this.q('DELETE FROM monitors WHERE id = ?').run(id);
   }

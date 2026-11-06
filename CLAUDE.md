@@ -12,7 +12,10 @@ waterfall_alert/             the add-on (Supervisor build context)
   DOCS.md / CHANGELOG.md     shown in the HA add-on UI
   app/
     src/server.js            node:http server, static files, ingress access control
-    src/api.js               all REST routes + input validation + edge/cycle checks
+    src/api.js               all REST routes + edge/cycle checks
+    src/validate.js          HttpError, normalizeMonitor/normalizeTag (shared by api.js and transfer.js)
+    src/transfer.js          CSV export/import of monitors (CSV_COLUMNS is the single column definition)
+    src/csv.js               RFC 4180 parse/write
     src/engine.js            scheduler + hierarchy logic (the core; read this first)
     src/graph.js             DAG helpers: ancestors/descendants, levels, cycles, subtree
     src/db.js                node:sqlite Store, migrations (PRAGMA user_version)
@@ -32,6 +35,8 @@ waterfall_alert/             the add-on (Supervisor build context)
     test/icons.test.js       favicon discovery and icon cache, with a fake `request`
     test/minecraft.test.js   Server List Ping against a fake server, SRV resolution
     test/tags.test.js        tag routes through createApi(), with a real Store and Engine
+    test/transfer.test.js    CSV round trip into a fresh store, import modes, rollback on errors
+docs/csv.md                  user guide for the CSV format (linked from the Settings page)
 ```
 
 ## Commands
@@ -80,6 +85,14 @@ Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are j
 - Tag filter (`ui.tagFilter`, in localStorage): `filterView()` in app.js returns `match` (monitors with any selected tag) and `show` (match + all ancestors). Ancestors that don't match get `.context` and are drawn faded, in both the tree and the Falls.
 - Tag colours are set per element with the `--tag` custom property and mixed with `color-mix()` in CSS. `h()` routes `--*` style keys through `style.setProperty`.
 
+## CSV import & export (transfer.js)
+
+- `CSV_COLUMNS` drives the export, the import, the template, and the column reference on the Settings page (`GET api/csv/columns`). Adding a monitor type or config field means adding its column there **and** to `docs/csv.md`.
+- Export and import must stay symmetric: export → import into an empty store must reproduce the monitors (the round-trip test checks this). References use `key` (blank = name); exports fill `key` in only for shared names or names containing `|`.
+- `importCsv` runs everything inside `store.tx` and throws a private `Rollback` on any error or for `dryRun`, so the preview is exactly what an import would do. Icon uploads are returned (`uploads`) and saved by the route only after commit, because `IconCache` keeps in-memory metadata.
+- Missing column = keep (update) / default (new). Present but blank = default. Except: `parents`/`tags` blank = none, and `notifications` blank = default channels, `none` = none.
+- `POST /api/csv/import` gets a 32 MB body limit (in server.js), since uploaded icons travel as data URLs.
+
 ## Falls diagram (flow.js)
 
 - `render(monitors, focusId, {selected, selectMode})`: with a focus, only `lineage()` (ancestors + descendants) is laid out. The structure is rebuilt only when the topology key changes (ids, names, edges, icons, tags, focus); `#paint` updates status, selection and `.context` classes in place so animations don't restart.
@@ -103,7 +116,7 @@ Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are j
 
 ## Adding things
 
-- **Monitor type**: add a checker in `src/checkers/`, register it in `checkers/index.js` (`checkers` + `MONITOR_TYPES`), add `describeTarget` in `engine.js`, then add form fields in `public/js/forms.js` (`TYPE_FIELDS`, `TYPE_HELP`) and a label in `util.js` (`TYPE_LABEL`).
+- **Monitor type**: add a checker in `src/checkers/`, register it in `checkers/index.js` (`checkers` + `MONITOR_TYPES`), add `describeTarget` in `engine.js`, then add form fields in `public/js/forms.js` (`TYPE_FIELDS`, `TYPE_HELP`) and a label in `util.js` (`TYPE_LABEL`). Add its settings to `CSV_COLUMNS` in `transfer.js` and to `docs/csv.md`.
 - **Notification provider**: add an entry to `providers` in `notifier.js` with `label`, `fields` (rendered automatically by the form) and `send(cfg, alert)`.
 
 ## Releasing

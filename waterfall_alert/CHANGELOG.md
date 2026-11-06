@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- **Import and export monitors as CSV** under **Settings → Import & export monitors**. Exports and imports use the same columns, so an export imports as it is into another install: the hierarchy, settings, tags (with colours), icons (uploaded ones included) and notification choices all come along.
+- Import modes for names that already exist: add as new, update (bulk-edit in a spreadsheet and import again) or skip.
+- Choosing a file checks it first and shows what would change, with any problems by line number. Imports are all-or-nothing.
+- A blank template, an example file, a column reference on the Settings page, and a [full guide](https://github.com/big-barlowe/WaterfallAlert/blob/main/docs/csv.md).
+- Tag names can no longer contain `|`, which separates list items in CSV files.
+
 ## 0.4.0
 
 - **Tags.** Give monitors coloured tags, shown as small pills along the bottom of each monitor in the Falls, as coloured dots in the monitor list, and on the monitor page. Manage them on the new **Tags** page (rename, recolour, delete).

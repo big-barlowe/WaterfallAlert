@@ -34,13 +34,13 @@ function send(res, status, payload) {
   res.end(body);
 }
 
-function readBody(req) {
+function readBody(req, limit) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > 1024 * 1024) {
+      if (size > limit) {
         reject(new HttpError(413, 'Body too large'));
         req.destroy();
       } else chunks.push(c);
@@ -86,7 +86,8 @@ const server = http.createServer(async (req, res) => {
   if (!allowed(req, url.pathname)) return send(res, 403, { error: 'Direct access is disabled; open Waterfall Alert from the Home Assistant sidebar.' });
   if (!url.pathname.startsWith('/api/')) return serveStatic(res, url.pathname);
   try {
-    const body = req.method === 'GET' ? null : await readBody(req);
+    // CSV imports can carry uploaded icons as data URLs
+    const body = req.method === 'GET' ? null : await readBody(req, url.pathname === '/api/csv/import' ? 32 * 1024 * 1024 : 1024 * 1024);
     const out = await api(req, url, body);
     if (out instanceof RawResponse) {
       res.writeHead(200, { 'Content-Type': out.type, ...out.headers });

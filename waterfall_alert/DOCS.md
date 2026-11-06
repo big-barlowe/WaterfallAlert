@@ -104,6 +104,16 @@ The **Alerts** page lists every alert that was sent and which channels delivered
 
 The UI is served through Home Assistant ingress (sidebar → **Waterfall**), which handles authentication. Push monitors need to be reachable by whatever sends the push, so map a host port under **Network**. With `allow_direct_access: false` (the default), only `/api/push/…` is reachable on that port.
 
+## Import and export (CSV)
+
+**Settings → Import & export monitors** exports every monitor to a CSV file and imports monitors from one. Use it to move to a new install, to edit many monitors at once in a spreadsheet, or to set up a batch of monitors from the blank template or the example file.
+
+- Exports and imports use the same columns, so an export imports as it is. The hierarchy, settings, tags, icons and notification choices come along. Notification channels don't, because they hold secrets: create them on the new install first, with the same names.
+- When a name already exists, you choose: add a second monitor, update the existing one, or skip the row.
+- Choosing a file only checks it and shows what would change. Nothing is saved until you press **Import**, and a file with any error imports nothing.
+
+The Settings page has a column reference. The [full guide](https://github.com/big-barlowe/WaterfallAlert/blob/main/docs/csv.md) covers every column and value, with examples.
+
 ## Data
 
 Everything is stored in SQLite at `/data/waterfall.db` and is included in Home Assistant backups. Heartbeats older than the retention period (Settings, default 90 days) are pruned every 6 hours.

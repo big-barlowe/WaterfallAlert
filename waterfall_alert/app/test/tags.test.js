@@ -47,6 +47,7 @@ test('tags are validated and names are unique regardless of case', async () => {
   await assert.rejects(call('POST', '/api/tags', { name: 'home LAB', color: '#ffffff' }), /already a tag called "Home lab"/);
   await assert.rejects(call('POST', '/api/tags', { name: 'x', color: 'red' }), /colour/);
   await assert.rejects(call('POST', '/api/tags', { name: ' ', color: '#ffffff' }), /required/);
+  await assert.rejects(call('POST', '/api/tags', { name: 'a|b', color: '#ffffff' }), /cannot contain/);
   // renaming to its own name in another case is fine
   assert.equal((await call('PUT', `/api/tags/${t.id}`, { name: 'HOME LAB' })).name, 'HOME LAB');
 });

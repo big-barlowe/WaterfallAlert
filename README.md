@@ -33,6 +33,7 @@ Other affected monitors (3):
 - **Notifications:** Home Assistant notify services, ntfy, Discord, Slack, Telegram, Pushover, Gotify, generic JSON webhook, email (SMTP).
 - **Water-themed UI.** A live "falls" diagram where healthy streams flow with a blue glow, streams below a failure run dry, and blocked branches go still. Click a monitor to trace just its upstream and downstream, and expand it for a details panel.
 - **Icons.** HTTP monitors show their site's favicon automatically. You can also choose a built-in icon, an emoji, an image URL or upload your own.
+- **CSV import & export.** Move all your monitors to another install, or edit many at once in a spreadsheet. An export imports as it is. See the [CSV guide](docs/csv.md).
 - **Tags.** Coloured tags on each monitor, a tag filter for the list and the falls, and bulk tagging: shift-click or drag a box over monitors in the falls, then add or remove tags, optionally including everything downstream.
 
 ## Install as a Home Assistant add-on

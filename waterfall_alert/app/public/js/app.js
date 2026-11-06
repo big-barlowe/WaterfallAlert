@@ -888,10 +888,129 @@ async function renderSettings() {
     h('h3', null, 'Data'),
     h('div', { class: 'field' }, h('label', { for: 's-ret' }, 'Keep heartbeat history for (days)'), retention),
     h('div', { class: 'form-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Save'))),
+    csvCard(),
     h('div', { class: 'card' },
       h('h3', null, 'About'),
       h('p', null, `Waterfall Alert ${info.version}${info.addon ? ' · running as a Home Assistant add-on' : ' · standalone'}`),
       h('p', { class: 'muted' }, 'Monitors are checked top-down. When something fails, its parents are re-checked first, so you get one alert for the real cause listing everything downstream of it.'))));
+}
+
+const CSV_GUIDE = 'https://github.com/big-barlowe/WaterfallAlert/blob/main/docs/csv.md';
+
+const IMPORT_MODES = [
+  ['add', 'Add every row as a new monitor', 'For a new install, or when the file only has new monitors.'],
+  ['update', 'Update monitors with the same name', 'Edit monitors in bulk: export, change the file, import. Rows with new names are added.'],
+  ['skip', 'Skip monitors that already exist', 'Only add the rows whose name isn’t taken yet.'],
+];
+
+function csvCard() {
+  let text = null;
+  let fileName = '';
+  let mode = 'add';
+  const result = h('div', { class: 'csv-result', 'aria-live': 'polite' });
+  const fileInput = h('input', {
+    type: 'file',
+    id: 'csv-file',
+    accept: '.csv,text/csv',
+    onchange: async (e) => {
+      const file = e.target.files[0];
+      text = file ? await file.text() : null;
+      fileName = file?.name ?? '';
+      check();
+    },
+  });
+
+  const issueList = (items, cls) => h('ul', { class: `csv-issues ${cls}` },
+    items.slice(0, 50).map((i) => h('li', null, i.line ? h('span', { class: 'csv-line' }, `Line ${i.line}`) : null, i.message)),
+    items.length > 50 ? h('li', { class: 'muted' }, `…and ${items.length - 50} more`) : null);
+  const counts = (r, verbs) => [
+    r.created && `${r.created} ${verbs[0]}`,
+    r.updated && `${r.updated} ${verbs[1]}`,
+    r.skipped && `${r.skipped} skipped`,
+    r.tagsCreated && `${r.tagsCreated} new tag${r.tagsCreated === 1 ? '' : 's'}`,
+  ].filter(Boolean).join(' · ') || 'nothing to change';
+
+  async function check() {
+    if (!text) return fill(result);
+    fill(result, h('p', { class: 'muted small' }, 'Checking…'));
+    try {
+      const r = await api('csv/import', { method: 'POST', body: { csv: text, mode, dryRun: true } });
+      if (!r.ok) {
+        return fill(result, h('div', { class: 'csv-box bad' },
+          h('strong', null, `${fileName}: ${r.errors.length} problem${r.errors.length === 1 ? '' : 's'}. Nothing will be imported until they are fixed.`),
+          issueList(r.errors, 'errors'),
+          r.warnings.length ? [h('p', { class: 'small' }, 'Also:'), issueList(r.warnings, 'warnings')] : null));
+      }
+      fill(result, h('div', { class: 'csv-box ok' },
+        h('strong', null, `${fileName}: ${counts(r, ['to add', 'to update'])}`),
+        r.warnings.length ? issueList(r.warnings, 'warnings') : null,
+        h('div', { class: 'form-actions' },
+          h('button', { type: 'button', class: 'btn primary', disabled: !(r.created || r.updated), onclick: run }, 'Import'))));
+    } catch (err) {
+      fill(result, h('div', { class: 'csv-box bad' }, err.message));
+    }
+  }
+
+  async function run() {
+    try {
+      const r = await api('csv/import', { method: 'POST', body: { csv: text, mode } });
+      if (!r.applied) return check();
+      toast(`Imported: ${counts(r, ['added', 'updated'])}`, 'success');
+      fill(result, h('div', { class: 'csv-box ok' }, h('strong', null, `Done: ${counts(r, ['added', 'updated'])}.`), ' ', h('a', { href: '#/' }, 'See them in the Falls →')));
+      text = null;
+      fileInput.value = '';
+      refresh();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  }
+
+  const reference = h('div', { class: 'table-scroll' }, h('p', { class: 'muted small' }, 'Loading…'));
+  const loadReference = async () => {
+    const cols = await api('csv/columns');
+    const label = (types) => types.map((t) => TYPE_LABEL[t] ?? t).join(', ');
+    fill(reference, h('table', { class: 'csv-columns' },
+      h('thead', null, h('tr', null, h('th', null, 'Column'), h('th', null, 'Used by'), h('th', null, 'Values'), h('th', null, 'Notes'))),
+      h('tbody', null, cols.map((c) => h('tr', null,
+        h('td', null, h('code', null, c.name)),
+        h('td', null, c.types ? label(c.types) : 'All',
+          c.required ? h('div', { class: 'csv-req' }, !c.types || c.required.length === c.types.length ? 'required' : `required for ${label(c.required)}`) : null),
+        h('td', null, c.values ? c.values.map((v) => h('code', { class: 'csv-val' }, v)) : null,
+          c.def != null ? h('div', { class: 'muted small' }, 'default ', h('code', null, String(c.def))) : null),
+        h('td', { class: 'csv-help' }, c.help ?? ''))))));
+  };
+
+  return h('section', { class: 'card csv-card' },
+    h('h3', null, 'Import & export monitors'),
+    h('p', { class: 'muted' }, 'Move monitors to another install, or edit many at once in a spreadsheet. Exports and imports use the same columns, so an exported file imports as it is: hierarchy, settings, tags, icons and notification choices included. Notification channels themselves are not exported, since they hold passwords and tokens; create them on the new install first, with the same names.'),
+    h('div', { class: 'csv-downloads' },
+      h('a', { class: 'btn primary', href: 'api/csv/export', download: '' }, 'Export all monitors (CSV)'),
+      h('a', { class: 'btn', href: 'api/csv/template', download: '' }, 'Blank template'),
+      h('a', { class: 'btn', href: 'api/csv/example', download: '' }, 'Example file')),
+    h('h4', null, 'Import'),
+    h('div', { class: 'field' }, h('label', { for: 'csv-file' }, 'CSV file'), fileInput),
+    h('fieldset', { class: 'csv-modes' },
+      h('legend', null, 'When a monitor with the same name already exists'),
+      IMPORT_MODES.map(([value, title, help]) => h('label', { class: 'check' },
+        h('input', {
+          type: 'radio',
+          name: 'csv-mode',
+          value,
+          checked: value === mode,
+          onchange: () => {
+            mode = value;
+            check();
+          },
+        }),
+        h('span', null, title, h('small', null, help))))),
+    h('p', { class: 'help' }, 'Choosing a file only checks it. Nothing changes until you press Import, and a file with any problem imports nothing.'),
+    result,
+    h('details', { class: 'csv-ref', ontoggle: (e) => e.target.open && loadReference() },
+      h('summary', null, 'Column reference'),
+      h('p', { class: 'small' }, 'One row per monitor; the first row holds the column names. Only ', h('code', null, 'name'), ' is needed in every file, and columns can be in any order. ',
+        'Lists (parents, tags, notifications) are separated by ', h('code', null, '|'), '. A column that is missing keeps the current value (or the default, for new monitors); a column that is there but blank means the default. ',
+        h('a', { href: CSV_GUIDE, target: '_blank', rel: 'noopener' }, 'Full guide with examples on GitHub ↗')),
+      reference));
 }
 
 // ---- routing ----------------------------------------------------------------

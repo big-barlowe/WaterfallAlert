@@ -1,18 +1,14 @@
 import { Graph } from './graph.js';
-import { MONITOR_TYPES } from './checkers/index.js';
 import { deliver, providerCatalog, providers } from './notifier.js';
 import { config, isAddon } from './config.js';
-import { validateIconSpec, decodeDataUrl } from './icons.js';
+import { decodeDataUrl } from './icons.js';
+import { HttpError, badRequest, int, idList, normalizeMonitor, normalizeTag } from './validate.js';
+import { exportCsv, importCsv, CSV_COLUMNS, CSV_EXAMPLE, csvTemplate } from './transfer.js';
 import fs from 'node:fs';
 
-const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+export { HttpError };
 
-export class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
+const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 // A non-JSON response (icon images).
 export class RawResponse {
@@ -21,56 +17,6 @@ export class RawResponse {
     this.body = body;
     this.headers = headers;
   }
-}
-
-const badRequest = (fn) => {
-  try {
-    return fn();
-  } catch (err) {
-    throw new HttpError(400, err.message);
-  }
-};
-
-const int = (v, def, min, max) => {
-  const n = v === undefined || v === null || v === '' ? def : Math.round(Number(v));
-  if (!Number.isFinite(n)) throw new HttpError(400, `Expected a number, got "${v}"`);
-  return Math.min(max, Math.max(min, n));
-};
-
-const idList = (v) => (Array.isArray(v) ? [...new Set(v.map(Number).filter(Number.isInteger))] : undefined);
-
-function normalizeMonitor(body, existing) {
-  const base = existing ?? {};
-  const name = String(body.name ?? base.name ?? '').trim();
-  if (!name) throw new HttpError(400, 'Name is required');
-  const type = body.type ?? base.type;
-  if (!MONITOR_TYPES.includes(type)) throw new HttpError(400, `Unknown monitor type "${type}"`);
-  const interval = int(body.interval, base.interval ?? 60, 10, 86400);
-  return {
-    name,
-    type,
-    config: body.config && typeof body.config === 'object' ? body.config : base.config ?? {},
-    interval,
-    retries: int(body.retries, base.retries ?? 1, 0, 20),
-    retryInterval: int(body.retryInterval, base.retryInterval ?? 20, 5, 86400),
-    timeout: int(body.timeout, base.timeout ?? 10, 1, 300),
-    resendInterval: int(body.resendInterval, base.resendInterval ?? 0, 0, 10000),
-    parentMode: (body.parentMode ?? base.parentMode) === 'any' ? 'any' : 'all',
-    active: body.active ?? base.active ?? true,
-    description: String(body.description ?? base.description ?? ''),
-    icon: body.icon === undefined ? base.icon ?? '' : badRequest(() => validateIconSpec(body.icon)),
-  };
-}
-
-const TAG_COLOR = /^#[0-9a-f]{6}$/;
-
-function normalizeTag(body, existing) {
-  const name = String(body.name ?? existing?.name ?? '').trim().replace(/\s+/g, ' ');
-  if (!name) throw new HttpError(400, 'Tag name is required');
-  if (name.length > 32) throw new HttpError(400, 'Tag names can be at most 32 characters');
-  const color = String(body.color ?? existing?.color ?? '').toLowerCase();
-  if (!TAG_COLOR.test(color)) throw new HttpError(400, 'Tag colour must look like #38bdf8');
-  return { name, color };
 }
 
 // Builds the router. `ctx` = { store, engine, icons }.
@@ -337,6 +283,31 @@ export function createApi({ store, engine, icons }) {
     });
     if (changed) engine.touch();
     return { ok: true, changed, monitors: targets.size };
+  });
+
+  // ---- CSV import & export -------------------------------------------------
+
+  const csvFile = (name, text) => new RawResponse('text/csv; charset=utf-8', text, {
+    'Content-Disposition': `attachment; filename="${name}"`,
+    'Cache-Control': 'no-store',
+  });
+
+  route('GET', '/api/csv/export', () => csvFile(`waterfall-alert-monitors-${new Date().toISOString().slice(0, 10)}.csv`, exportCsv(store)));
+  route('GET', '/api/csv/template', () => csvFile('waterfall-alert-template.csv', csvTemplate()));
+  route('GET', '/api/csv/example', () => csvFile('waterfall-alert-example.csv', CSV_EXAMPLE));
+  route('GET', '/api/csv/columns', () => CSV_COLUMNS.map(({ name, types, values, def, required, help }) => ({ name, types, values, def, required, help })));
+
+  // With dryRun nothing is saved; the result says what would happen.
+  route('POST', '/api/csv/import', ({ body }) => {
+    const mode = ['add', 'update', 'skip'].includes(body.mode) ? body.mode : 'add';
+    const res = importCsv(store, String(body.csv ?? ''), { mode, dryRun: Boolean(body.dryRun) });
+    if (res.applied) {
+      for (const u of res.uploads) icons.saveUpload(u.id, u.img);
+      engine.reload(res.affected);
+      icons.sync(store.listMonitors(), res.affected);
+    }
+    const { affected, uploads, ...summary } = res;
+    return summary;
   });
 
   // ---- notifications ------------------------------------------------------
