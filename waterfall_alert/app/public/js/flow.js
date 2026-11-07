@@ -211,13 +211,37 @@ export class FlowView {
     this.hint = h('div', { class: 'map-hint', 'aria-hidden': 'true' },
       `Hold ${isMac ? '⌘' : 'Ctrl'} and scroll to zoom · drag to move around`);
     this.width = 0;
+    this.height = 0;
+    this.expanded = false;
     this.resizer = new ResizeObserver(() => {
       if (!container.isConnected) return this.resizer.disconnect();
-      if (container.clientWidth === this.width) return;
+      // Normally the map sets its own height; only popped out does it follow the box.
+      const H = this.expanded ? container.clientHeight : 0;
+      if (container.clientWidth === this.width && H === this.height) return;
       this.width = container.clientWidth;
-      if (this.svgEl) this.view.auto ? this.#fit(false) : this.#apply(false);
+      this.height = H;
+      if (!this.svgEl) return;
+      if (this.view.auto) return this.#fit(false);
+      if (this.expanded) this.view.h = H;
+      this.#apply(false);
     });
     this.resizer.observe(container);
+  }
+
+  // Popped out, the map fills its box (sized by CSS) instead of sizing it.
+  // The middle of what was on screen stays in the middle.
+  setExpanded(on) {
+    if (this.expanded === on) return;
+    const v = this.view;
+    const w0 = this.container.clientWidth;
+    const h0 = v.h;
+    this.expanded = on;
+    this.container.style.height = '';
+    if (!this.svgEl || v.k == null) return;
+    if (v.auto) return this.#fit(false);
+    const h = this.#height(v.k);
+    Object.assign(v, { x: v.x + (this.container.clientWidth - w0) / 2, y: v.y + (h - h0) / 2, h });
+    this.#apply(false);
   }
 
   // With `focusId`, only that monitor's upstream and downstream are drawn.
@@ -412,11 +436,13 @@ export class FlowView {
   // ---- map navigation -------------------------------------------------------
 
   #maxHeight() {
+    if (this.expanded) return this.container.clientHeight;
     return Math.max(VIEW_MIN_H, Math.round(window.innerHeight * (this.container.clientWidth < 600 ? 0.6 : 0.72)));
   }
 
   // The map's height: the diagram at zoom `k`, within limits.
   #height(k) {
+    if (this.expanded) return this.container.clientHeight;
     return clamp(Math.ceil(this.content.height * k), VIEW_MIN_H, this.#maxHeight());
   }
 
@@ -442,7 +468,7 @@ export class FlowView {
   #apply(animate) {
     const v = this.view;
     if (!this.viewEl) return;
-    this.container.style.height = `${v.h}px`;
+    if (!this.expanded) this.container.style.height = `${v.h}px`;
     const glide = animate && !reducedMotion();
     this.viewEl.classList.toggle('glide', glide);
     clearTimeout(this.glideTimer);

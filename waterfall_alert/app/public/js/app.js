@@ -1,4 +1,4 @@
-import { api, h, toast, modal, confirmDialog, storage, store, STATUS_LABEL, BEAT_STATUS, TYPE_LABEL, fmtTime, fmtAgo, fmtPct, fmtMs, fill } from './util.js';
+import { api, h, svg, toast, modal, confirmDialog, storage, store, STATUS_LABEL, BEAT_STATUS, TYPE_LABEL, fmtTime, fmtAgo, fmtPct, fmtMs, fill } from './util.js';
 import { FlowView, lineage } from './flow.js';
 import { iconEl } from './icons.js';
 import { heartbeatBar, responseChart } from './chart.js';
@@ -26,6 +26,7 @@ const ui = {
   selectMode: false,  // falls diagram: clicks select instead of focusing
   tagDownstream: storage('tagDownstream', false),
   flowView: {},       // falls diagram zoom and position, kept across visits
+  popout: null,       // 'side' or 'falls': popped out to fill the window
 };
 
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true });
@@ -462,6 +463,79 @@ function renderTreeSelect() {
     h('p', { class: 'muted small' }, ui.editMode ? 'Drag any of them to move them all.' : 'Shift-click to add or remove more. Tag them in the Falls.'));
 }
 
+// ---- layout: list width and pop-out -------------------------------------------
+
+const SIDE_W = { min: 240, def: 340 };
+
+function setSideWidth(px, save = true) {
+  const handle = $('#side-resize');
+  const max = Math.max(SIDE_W.min, Math.min(900, Math.round(window.innerWidth * 0.6)));
+  const w = Math.round(Math.min(max, Math.max(SIDE_W.min, px)));
+  document.documentElement.style.setProperty('--side-w', `${w}px`);
+  handle.setAttribute('aria-valuemin', SIDE_W.min);
+  handle.setAttribute('aria-valuemax', max);
+  handle.setAttribute('aria-valuenow', w);
+  if (save) store('sideWidth', w);
+}
+
+// Drag the handle (or use the arrow keys on it); double-click resets.
+function initSideResize() {
+  const handle = $('#side-resize');
+  setSideWidth(storage('sideWidth', SIDE_W.def), false);
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const start = { x: e.clientX, w: $('.side').getBoundingClientRect().width };
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      // pointer already gone
+    }
+    document.body.classList.add('resizing');
+    const move = (ev) => setSideWidth(start.w + ev.clientX - start.x, false);
+    const end = () => {
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      document.body.classList.remove('resizing');
+      setSideWidth($('.side').getBoundingClientRect().width);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  });
+  handle.addEventListener('dblclick', () => setSideWidth(SIDE_W.def));
+  handle.addEventListener('keydown', (e) => {
+    const step = { ArrowLeft: -16, ArrowRight: 16 }[e.key];
+    if (!step) return;
+    e.preventDefault();
+    setSideWidth($('.side').getBoundingClientRect().width + step * (e.shiftKey ? 4 : 1));
+  });
+}
+
+const popIcon = (out) => svg('svg', { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true' },
+  svg('path', { d: out ? 'M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9' : 'M13.5 6.5h-4v-4M9.5 6.5L14 2M2.5 9.5h4v4M6.5 9.5L2 14' }));
+
+function paintPopButton(btn, which, name) {
+  if (!btn) return;
+  const on = ui.popout === which;
+  btn.setAttribute('aria-pressed', String(on));
+  btn.title = on ? 'Back to the normal view (Esc)' : `Pop out the ${name}`;
+  btn.setAttribute('aria-label', btn.title);
+  fill(btn, popIcon(!on));
+}
+
+// Pop the monitor list or the Falls out to fill the window (null = neither).
+function setPopout(which) {
+  ui.popout = which;
+  document.body.classList.toggle('popout', Boolean(which));
+  document.body.classList.toggle('popout-side', which === 'side');
+  document.body.classList.toggle('popout-falls', which === 'falls');
+  paintPopButton($('#side-pop'), 'side', 'monitor list');
+  paintPopButton($('#falls-pop'), 'falls', 'Falls');
+  flow?.setExpanded(which === 'falls');
+}
+
 // ---- dashboard --------------------------------------------------------------
 
 let flow;
@@ -490,6 +564,11 @@ async function renderDashboard(isUpdate = false) {
               h('span', { class: 'key dry' }, 'Dry — source down'),
               h('span', { class: 'key still' }, 'Still — blocked/paused')),
             h('button', {
+              id: 'falls-pop',
+              class: 'btn small pop-btn',
+              onclick: () => setPopout(ui.popout === 'falls' ? null : 'falls'),
+            }),
+            h('button', {
               id: 'select-toggle',
               class: 'btn small',
               title: 'Select monitors to tag or move them. Shortcut: shift-click, or hold shift and drag a box.',
@@ -507,6 +586,7 @@ async function renderDashboard(isUpdate = false) {
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, 'Recent events')),
         h('div', { id: 'dash-events' }))));
+    paintPopButton($('#falls-pop'), 'falls', 'Falls');
   }
   const c = counts();
   fill($('#dash-stats'),
@@ -1138,6 +1218,7 @@ function parseRoute() {
 }
 
 async function route() {
+  if (ui.popout) setPopout(null);
   ui.route = parseRoute();
   const r = ui.route;
   document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.route === (r.name === 'monitor' || r.name === 'edit' || r.name === 'add' ? 'dashboard' : r.name)));
@@ -1164,6 +1245,9 @@ async function route() {
 
 // ---- boot -------------------------------------------------------------------
 
+$('#side-pop').addEventListener('click', () => setPopout(ui.popout === 'side' ? null : 'side'));
+initSideResize();
+setPopout(null);
 $('#edit-toggle').addEventListener('click', () => {
   ui.editMode = !ui.editMode;
   renderTree();
@@ -1175,13 +1259,17 @@ $('#search').addEventListener('input', (e) => {
 window.addEventListener('hashchange', route);
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || document.querySelector('.modal-back')) return;
-  if (ui.selected.size) setSelection([]);
-  else if (ui.route?.name !== 'dashboard') return;
-  else if (ui.selectMode) {
-    ui.selectMode = false;
-    renderDashboard(true);
-  } else if (ui.info != null) setFocus(ui.focus, null);
-  else if (ui.focus != null) setFocus(null, null);
+  if (ui.selected.size) return setSelection([]);
+  // Undo the Falls' own state first, unless only the list is in view.
+  if (ui.route?.name === 'dashboard' && ui.popout !== 'side') {
+    if (ui.selectMode) {
+      ui.selectMode = false;
+      return renderDashboard(true);
+    }
+    if (ui.info != null) return setFocus(ui.focus, null);
+    if (ui.focus != null) return setFocus(null, null);
+  }
+  if (ui.popout) setPopout(null);
 });
 let resizeTimer;
 window.addEventListener('resize', () => {

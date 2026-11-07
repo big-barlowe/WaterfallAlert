@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- **Resizable monitor list.** Drag the gap between the list and the page to make it wider or narrower (double-click to reset). The width is remembered.
+- The monitor list no longer cuts names short. When it is too narrow, it scrolls sideways. The search box, tag filter and selection stay in place above it while it scrolls.
+- **Pop out** the monitor list or the Falls to fill the window, with the new button beside **Edit** and beside **Select**. <kbd>Esc</kbd> puts it back.
+
 ## 0.6.1
 
 - Leaving a traced view in the Falls (clicking empty space, <kbd>Esc</kbd> or **Show all**) keeps the monitor you traced where it is, at the same zoom, instead of jumping back to the overview. The fit button still shows everything.

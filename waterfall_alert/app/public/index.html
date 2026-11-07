@@ -41,6 +41,7 @@
         <input id="search" type="search" placeholder="Search monitors" aria-label="Search monitors">
         <a class="btn primary small" href="#/add" title="Add monitor">+ Add</a>
         <button id="edit-toggle" class="btn small" aria-pressed="false">Edit</button>
+        <button id="side-pop" class="btn small pop-btn" aria-pressed="false"></button>
       </div>
       <p id="edit-hint" class="edit-hint" hidden>
         Drag a monitor onto another to nest it underneath. Hold <kbd>Alt</kbd>/<kbd>⌥</kbd> while dropping to add an extra parent instead of moving. <kbd>Shift</kbd>-click to select several, then drag any of them to move them all. On touch screens use <b>⇅</b>.
@@ -49,6 +50,7 @@
       <div id="tree-select" class="tree-select" aria-live="polite" hidden></div>
       <div id="tree" class="tree"></div>
     </aside>
+    <div id="side-resize" class="side-resize" role="separator" aria-orientation="vertical" aria-label="Monitor list width" aria-controls="tree" tabindex="0" title="Drag to resize. Double-click to reset."></div>
     <main id="main" class="main"></main>
   </div>
 

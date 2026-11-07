@@ -34,6 +34,12 @@ A *group* is a plain folder. It has no check of its own and never blocks what's 
 
 ## Arranging monitors
 
+The monitor list is on the left. To give it more room:
+
+- **Resize it** by dragging the gap between the list and the rest of the page. Double-click the gap to reset the width; with the gap focused, the arrow keys resize it too. The width is remembered.
+- **Scroll sideways** when names don't fit: names are never cut short, so a narrow list scrolls horizontally.
+- **Pop it out** with the button next to **Edit** to fill the window. The button again, or <kbd>Esc</kbd>, puts it back. Opening a monitor also puts it back.
+
 - **Edit button** (above the monitor list): drag a monitor onto another to move it underneath. Hold <kbd>Alt</kbd>/<kbd>⌥</kbd> while dropping to **add** that monitor as an extra parent instead of moving. Drop it on *Drop here to move to the top level* to make it top level. The row buttons are: **+** (add a monitor beneath), **⇅** (move, which also works on touch screens), **✎** (settings) and **⨯** (detach from this parent).
 - **Move several at once:** shift-click (or ctrl/⌘-click) monitors in the list to select them, or select them in the Falls. Then drag any selected row in Edit mode, or press **Move…** in the selection box at the top of the list, and they all move together. A selected monitor whose parent is also selected stays under that parent, so whole branches keep their shape. A monitor selected in the list moves away from the parent it was listed under; one selected in the Falls has all of its parents replaced (unless you choose to keep them).
 - **Monitor settings → Hierarchy**: the *Parent monitors* and *Dependent monitors* lists. They stay in sync: adding a parent here lists this monitor as that parent's dependent. Any choice that would create a loop is hidden.
@@ -45,6 +51,7 @@ The dashboard diagram shows the whole hierarchy as streams: water flows from hea
 It works like a map:
 
 - **Move around** by dragging. On a touch screen, drag with one finger.
+- **Pop it out** with the button next to **Select** to fill the window with the diagram. The button again, or <kbd>Esc</kbd> once nothing is traced or selected, puts it back.
 - **Zoom** with <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + scroll, by pinching on a trackpad or touch screen, or with the **−** and **+** buttons in the corner. Click the percentage for actual size, and the corners button to fit everything in again. A plain scroll still scrolls the page.
 - The diagram starts out fitted to the space, and fits again when you trace a monitor or change the tag filter. When you leave a traced view, the monitor you traced stays where it is and the rest of the diagram fills in around it. Your zoom and position are otherwise kept, even when you open a monitor and come back.
 

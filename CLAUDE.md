@@ -112,6 +112,7 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 
 ## Conventions
 
+- **Layout.** `.layout` is a 3-column grid: list (`--side-w`, set by the `#side-resize` handle and kept in localStorage), handle, main. `.side`/`.main` have explicit `grid-column`s so nothing reflows when one is popped out. Pop-out (`setPopout('side'|'falls')` in app.js) adds `popout-*` body classes that make the panel `position: fixed`; it needs `align-self: stretch`, because Chrome applies `.side`'s `align-self: start` to fixed boxes and would size it to its content. `FlowView.setExpanded()` makes the map fill its box instead of setting its own height. `route()` closes any pop-out.
 - **Two run modes.** As an HA add-on (`isAddon`: `SUPERVISOR_TOKEN` is set), ingress handles auth and `allowed()` in server.js limits direct port access. Standalone (Docker, `compose.yaml`) there is no auth at all, and HA features need `HA_URL`/`HA_TOKEN`. UI text about HA-specific things should check `api/info` → `addon`.
 - **No build step, no framework.** Frontend is ES modules served as-is. Keep it that way.
 - **All frontend URLs are relative** (`api/...`, `css/...`, hash routes). HA ingress serves the app under `/api/hassio_ingress/<token>/`, so a leading `/` breaks it.
