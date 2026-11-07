@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- Leaving a traced view in the Falls (clicking empty space, <kbd>Esc</kbd> or **Show all**) keeps the monitor you traced where it is, at the same zoom, instead of jumping back to the overview. The fit button still shows everything.
+
 ## 0.6.0
 
 - **The Falls is now a map.** Drag to move around, and zoom with ctrl/⌘ + scroll, a pinch, or the zoom buttons. It fits itself to the space when you trace a monitor or change the filter, and otherwise keeps your zoom and position.

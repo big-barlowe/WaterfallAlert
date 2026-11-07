@@ -46,7 +46,7 @@ It works like a map:
 
 - **Move around** by dragging. On a touch screen, drag with one finger.
 - **Zoom** with <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + scroll, by pinching on a trackpad or touch screen, or with the **−** and **+** buttons in the corner. Click the percentage for actual size, and the corners button to fit everything in again. A plain scroll still scrolls the page.
-- The diagram starts out fitted to the space, and fits again when you trace a monitor, show everything, or change the tag filter. Your zoom and position are otherwise kept, even when you open a monitor and come back.
+- The diagram starts out fitted to the space, and fits again when you trace a monitor or change the tag filter. When you leave a traced view, the monitor you traced stays where it is and the rest of the diagram fills in around it. Your zoom and position are otherwise kept, even when you open a monitor and come back.
 
 - **Click a monitor** to trace it: the diagram shows only what it depends on (upstream) and what depends on it (downstream). Click it again, press <kbd>Esc</kbd>, click empty space or use **Show all** to see everything. **Trace in Falls** on a monitor's page does the same.
 - **The expand button** (top-right corner of a monitor) opens a details panel with its status, response times, heartbeats and its full upstream and downstream lists. Click a monitor in those lists to trace that one instead.

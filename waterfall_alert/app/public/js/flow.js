@@ -254,6 +254,7 @@ export class FlowView {
     this.topology = key;
     const nodeH = monitors.some((m) => m.tagList?.length) ? TAGGED_H : NODE_H;
     const { pos, roots, width, height } = layout(monitors, nodeH);
+    const oldBoxes = this.boxes;
     this.boxes = new Map([...pos].map(([id, p]) => [id, { ...p, w: NODE_W, h: nodeH }]));
     const srcX = (Math.min(...roots.map((r) => pos.get(r).x)) + Math.max(...roots.map((r) => pos.get(r).x))) / 2 + NODE_W / 2;
     const srcY = PAD + 14;
@@ -390,17 +391,34 @@ export class FlowView {
 
     this.content = { width, height, anchor: focus != null ? { x: pos.get(focus).x + NODE_W / 2, y: pos.get(focus).y + nodeH / 2 } : null };
     const fitKey = JSON.stringify([focus, monitors.map((m) => m.id)]);
-    if (this.view.key !== fitKey || this.view.k == null) {
-      this.view.key = fitKey;
-      this.view.auto = true;
-    }
+    const v = this.view;
+    const keyChanged = v.key !== fitKey || v.k == null;
+    // Leaving a trace: the monitor that was traced stays exactly where it is
+    // on screen, at the same zoom, and the rest fills in around it.
+    const was = keyChanged && focus == null ? oldBoxes?.get(v.focus) : null;
+    const now = was && this.boxes.get(v.focus);
+    v.key = fitKey;
+    v.focus = focus;
+    if (keyChanged) v.auto = true;
     this.width = this.container.clientWidth;
-    if (this.view.auto) this.#fit(false);
+    if (now) {
+      Object.assign(v, { x: v.x + (was.x - now.x) * v.k, y: v.y + (was.y - now.y) * v.k, h: this.#height(v.k), auto: false });
+      this.#apply(false);
+    } else if (v.auto) this.#fit(false);
     else this.#apply(false);
     if (before.size && !reducedMotion()) this.#animate(before, edges);
   }
 
   // ---- map navigation -------------------------------------------------------
+
+  #maxHeight() {
+    return Math.max(VIEW_MIN_H, Math.round(window.innerHeight * (this.container.clientWidth < 600 ? 0.6 : 0.72)));
+  }
+
+  // The map's height: the diagram at zoom `k`, within limits.
+  #height(k) {
+    return clamp(Math.ceil(this.content.height * k), VIEW_MIN_H, this.#maxHeight());
+  }
 
   // Fit the whole diagram (or, when focused and too big, the part around the
   // focused monitor), never larger than actual size.
@@ -408,9 +426,8 @@ export class FlowView {
     const W = this.container.clientWidth;
     if (!W || !this.content) return;
     const { width: cw, height: ch, anchor } = this.content;
-    const maxH = Math.max(VIEW_MIN_H, Math.round(window.innerHeight * (W < 600 ? 0.6 : 0.72)));
-    const k = clamp(Math.min(1, W / cw, maxH / ch), FIT_MIN, 1);
-    const H = clamp(Math.ceil(ch * k), VIEW_MIN_H, maxH);
+    const k = clamp(Math.min(1, W / cw, this.#maxHeight() / ch), FIT_MIN, 1);
+    const H = this.#height(k);
     const place = (size, total, at) => (total * k <= size ? (size - total * k) / 2 : at == null ? 0 : clamp(size / 2 - at * k, size - total * k, 0));
     Object.assign(this.view, {
       k,
