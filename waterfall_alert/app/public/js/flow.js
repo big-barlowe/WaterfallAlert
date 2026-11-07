@@ -1,4 +1,4 @@
-import { svg, STATUS_LABEL, TYPE_LABEL, fmtMs, fill } from './util.js';
+import { h, svg, STATUS_LABEL, TYPE_LABEL, fmtMs, fill } from './util.js';
 import { iconSvg } from './icons.js';
 
 const NODE_W = 184;
@@ -12,6 +12,12 @@ const BADGE = { cx: 26, cy: 28, r: 15 };
 const TEXT_X = 50;
 const TAG = { x: 12, y: 52, h: 13, pad: 5, gap: 4 };
 const TAG_FONT = '600 9px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+
+const ZOOM = { min: 0.2, max: 2.5, step: 1.25 };
+const FIT_MIN = 0.6; // fitting never shrinks below this; zoom out for the overview
+const VIEW_MIN_H = 320;
+const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
@@ -171,19 +177,47 @@ function subline(m) {
 // Callbacks: onSelect(id) when a node is clicked, onExpand(id) for its
 // expand button, onClear() for a click on empty water, onToggle(id) for a
 // shift/ctrl/⌘-click (or any click in select mode) and onMarquee(ids) with
-// the new selection after dragging a box over empty water.
+// the new selection after shift-dragging a box.
+//
+// The diagram is a map: drag to pan, ctrl/⌘ + scroll or pinch to zoom.
+// `view` ({k, x, y, h, key, auto}) holds the zoom and position; pass the
+// same object to a new FlowView to keep them. While `auto`, the view fits
+// the diagram, and it fits again whenever the focus or the set of shown
+// monitors changes.
 export class FlowView {
-  constructor(container, { onSelect, onExpand, onClear, onToggle, onMarquee }) {
+  constructor(container, { onSelect, onExpand, onClear, onToggle, onMarquee, view }) {
     this.container = container;
     this.onSelect = onSelect;
     this.onExpand = onExpand;
     this.onClear = onClear;
     this.onToggle = onToggle;
     this.onMarquee = onMarquee;
+    this.view = view ?? {};
     this.topology = null;
     this.nodeEls = new Map();
     this.selected = new Set();
     this.selectMode = false;
+    this.pointers = new Map();
+    this.gesture = null;
+
+    const button = (label, title, onclick, cls = '') => h('button', { type: 'button', class: `map-btn${cls}`, title, 'aria-label': title, onclick }, label);
+    this.zoomLabel = button('100%', 'Actual size', () => this.#zoomBy(1 / this.view.k), ' map-zoom');
+    this.controls = h('div', { class: 'map-controls' },
+      button('−', 'Zoom out', () => this.#zoomBy(1 / ZOOM.step)),
+      this.zoomLabel,
+      button('+', 'Zoom in', () => this.#zoomBy(ZOOM.step)),
+      button(svg('svg', { class: 'map-fit', viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true' },
+        svg('path', { d: 'M1.5 5.5v-4h4M10.5 1.5h4v4M14.5 10.5v4h-4M5.5 14.5h-4v-4' })), 'Fit to view', () => this.#fit(true)));
+    this.hint = h('div', { class: 'map-hint', 'aria-hidden': 'true' },
+      `Hold ${isMac ? '⌘' : 'Ctrl'} and scroll to zoom · drag to move around`);
+    this.width = 0;
+    this.resizer = new ResizeObserver(() => {
+      if (!container.isConnected) return this.resizer.disconnect();
+      if (container.clientWidth === this.width) return;
+      this.width = container.clientWidth;
+      if (this.svgEl) this.view.auto ? this.#fit(false) : this.#apply(false);
+    });
+    this.resizer.observe(container);
   }
 
   // With `focusId`, only that monitor's upstream and downstream are drawn.
@@ -194,7 +228,9 @@ export class FlowView {
     this.selectMode = selectMode;
     if (!monitors.length) {
       fill(this.container);
+      this.container.style.height = '';
       this.topology = null;
+      this.svgEl = null;
       this.nodeEls = new Map();
       return;
     }
@@ -264,7 +300,7 @@ export class FlowView {
         'aria-label': `Show details for ${m.name}`,
         onclick: (e) => {
           e.stopPropagation();
-          this.onExpand(m.id);
+          if (!this.#swallowClick()) this.onExpand(m.id);
         },
         onkeydown: (e) => {
           if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -301,7 +337,11 @@ export class FlowView {
         role: 'button',
         'aria-pressed': String(m.id === focus),
         'aria-label': m.id === focus ? `${m.name}, focused. Activate to show everything.` : `Focus on ${m.name}`,
-        onclick: (e) => (toggle(e) ? this.onToggle(m.id) : this.onSelect(m.id)),
+        onclick: (e) => {
+          if (this.#swallowClick()) return;
+          if (toggle(e)) this.onToggle(m.id);
+          else this.onSelect(m.id);
+        },
         onkeydown: (e) => {
           if (e.key !== 'Enter' && e.key !== ' ') return;
           e.preventDefault();
@@ -317,100 +357,277 @@ export class FlowView {
       svg('circle', { cx: srcX, cy: srcY, r: 10, class: 'spring' }),
       svg('circle', { cx: srcX, cy: srcY, r: 10, class: 'spring-ring' }));
 
+    this.viewEl = svg('g', { class: 'viewport' }, edges, nodes, source);
     const root = svg('svg', {
       class: `flow-svg${focus != null ? ' focusing' : ''}`,
-      width,
-      height,
-      viewBox: `0 0 ${width} ${height}`,
       role: 'group',
-      'aria-label': 'Monitor hierarchy flow diagram',
+      'aria-label': 'Monitor hierarchy flow diagram. Drag to move around; hold Ctrl or ⌘ and scroll, or pinch, to zoom.',
       onclick: (e) => {
-        if (this.suppressClick) {
-          this.suppressClick = false;
-          return;
-        }
+        if (this.#swallowClick()) return;
         if (!e.target.closest('.node')) this.onClear();
       },
-      onpointerdown: (e) => this.#marquee(e),
+      onpointerdown: (e) => this.#down(e),
+      onpointermove: (e) => this.#move(e),
+      onpointerup: (e) => this.#up(e),
+      onpointercancel: (e) => this.#up(e),
+      // Tabbing to a node that is off screen brings it into view.
+      onfocusin: (e) => {
+        const node = e.target.closest('.node');
+        if (node?.matches(':focus-visible')) this.#reveal([...this.nodeEls].find(([, n]) => n.g === node)?.[0]);
+      },
     },
     svg('defs', {},
       // Streams need a user-space region: a bounding-box one is zero-wide on
       // a perfectly vertical stream and would clip it away entirely.
       glowFilter('glow', { filterUnits: 'userSpaceOnUse', x: 0, y: 0, width, height }),
       glowFilter('glow-box', { x: '-50%', y: '-50%', width: '200%', height: '200%' })),
-    edges, nodes, source);
-    fill(this.container, root);
+    this.viewEl);
+    root.addEventListener('wheel', (e) => this.#wheel(e), { passive: false });
+    fill(this.container, root, this.controls, this.hint);
     this.svgEl = root;
+    this.gesture = null;
+    this.pointers.clear();
 
-    if (focus != null) {
-      const p = pos.get(focus);
-      this.container.scrollLeft = p.x + NODE_W / 2 - this.container.clientWidth / 2;
+    this.content = { width, height, anchor: focus != null ? { x: pos.get(focus).x + NODE_W / 2, y: pos.get(focus).y + nodeH / 2 } : null };
+    const fitKey = JSON.stringify([focus, monitors.map((m) => m.id)]);
+    if (this.view.key !== fitKey || this.view.k == null) {
+      this.view.key = fitKey;
+      this.view.auto = true;
     }
+    this.width = this.container.clientWidth;
+    if (this.view.auto) this.#fit(false);
+    else this.#apply(false);
     if (before.size && !reducedMotion()) this.#animate(before, edges);
   }
 
-  #point(e) {
-    const p = this.svgEl.createSVGPoint();
-    p.x = e.clientX;
-    p.y = e.clientY;
-    return p.matrixTransform(this.svgEl.getScreenCTM().inverse());
+  // ---- map navigation -------------------------------------------------------
+
+  // Fit the whole diagram (or, when focused and too big, the part around the
+  // focused monitor), never larger than actual size.
+  #fit(animate) {
+    const W = this.container.clientWidth;
+    if (!W || !this.content) return;
+    const { width: cw, height: ch, anchor } = this.content;
+    const maxH = Math.max(VIEW_MIN_H, Math.round(window.innerHeight * (W < 600 ? 0.6 : 0.72)));
+    const k = clamp(Math.min(1, W / cw, maxH / ch), FIT_MIN, 1);
+    const H = clamp(Math.ceil(ch * k), VIEW_MIN_H, maxH);
+    const place = (size, total, at) => (total * k <= size ? (size - total * k) / 2 : at == null ? 0 : clamp(size / 2 - at * k, size - total * k, 0));
+    Object.assign(this.view, {
+      k,
+      x: cw * k <= W ? (W - cw * k) / 2 : place(W, cw, anchor?.x ?? cw / 2),
+      y: place(H, ch, anchor?.y),
+      h: H,
+      auto: true,
+    });
+    this.#apply(animate);
   }
 
-  // Drag a box over empty water to select the nodes it touches. Shift (or
-  // ctrl/⌘) adds to the selection, Alt/⌥ takes away from it.
-  #marquee(e) {
+  #apply(animate) {
+    const v = this.view;
+    if (!this.viewEl) return;
+    this.container.style.height = `${v.h}px`;
+    const glide = animate && !reducedMotion();
+    this.viewEl.classList.toggle('glide', glide);
+    clearTimeout(this.glideTimer);
+    if (glide) this.glideTimer = setTimeout(() => this.viewEl?.classList.remove('glide'), 320);
+    this.viewEl.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.k})`;
+    this.zoomLabel.textContent = `${Math.round(v.k * 100)}%`;
+  }
+
+  // Zoom by `factor` keeping the point (sx, sy) of the diagram where it is.
+  #zoomAt(factor, sx, sy, animate) {
+    const v = this.view;
+    const k = clamp(v.k * factor, ZOOM.min, ZOOM.max);
+    if (Math.abs(k - v.k) < 1e-4) return;
+    v.x = sx - (sx - v.x) * (k / v.k);
+    v.y = sy - (sy - v.y) * (k / v.k);
+    v.k = k;
+    v.auto = false;
+    this.#apply(animate);
+  }
+
+  #zoomBy(factor) {
+    this.#zoomAt(factor, this.container.clientWidth / 2, this.view.h / 2, true);
+  }
+
+  #panTo(x, y, animate) {
+    Object.assign(this.view, { x, y, auto: false });
+    this.#apply(animate);
+  }
+
+  #reveal(id) {
+    const b = this.boxes.get(id);
+    if (!b) return;
+    const v = this.view;
+    const W = this.container.clientWidth;
+    const left = v.x + b.x * v.k;
+    const top = v.y + b.y * v.k;
+    if (left >= 0 && top >= 0 && left + b.w * v.k <= W && top + b.h * v.k <= v.h) return;
+    this.#panTo(W / 2 - (b.x + b.w / 2) * v.k, v.h / 2 - (b.y + b.h / 2) * v.k, true);
+  }
+
+  // Pinch-zoom on a trackpad arrives as a wheel event with ctrlKey set.
+  // A plain wheel scrolls the page as usual, with a hint.
+  #wheel(e) {
+    if (!(e.ctrlKey || e.metaKey)) {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) this.#showHint();
+      return;
+    }
+    e.preventDefault();
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    const r = this.svgEl.getBoundingClientRect();
+    this.#zoomAt(Math.exp(-dy * (Math.abs(dy) < 40 ? 0.012 : 0.002)), e.clientX - r.left, e.clientY - r.top, false);
+  }
+
+  #showHint() {
+    this.hint.classList.add('show');
+    clearTimeout(this.hintTimer);
+    this.hintTimer = setTimeout(() => this.hint.classList.remove('show'), 1400);
+  }
+
+  // A click that ends a drag or a pinch is not a click.
+  #swallowClick() {
+    const s = this.suppressClick;
     this.suppressClick = false;
-    if (e.button !== 0 || e.target.closest('.node')) return;
-    if (e.pointerType === 'touch' && !this.selectMode) return; // touch drags scroll
-    const svgEl = this.svgEl;
-    const start = this.#point(e);
-    const mode = e.altKey ? 'remove' : e.shiftKey || e.metaKey || e.ctrlKey ? 'add' : 'replace';
-    const base = new Set(this.selected);
-    let rect = null;
-    let result = base;
-    const move = (ev) => {
-      const p = this.#point(ev);
-      if (!rect) {
-        if (Math.hypot(p.x - start.x, p.y - start.y) < 5) return;
-        rect = svg('rect', { class: 'marquee', rx: 4 });
-        svgEl.append(rect);
-        try {
-          svgEl.setPointerCapture(ev.pointerId); // keep the drag going outside the diagram
-        } catch {
-          // pointer already gone
-        }
-      }
-      const box = { x: Math.min(p.x, start.x), y: Math.min(p.y, start.y), w: Math.abs(p.x - start.x), h: Math.abs(p.y - start.y) };
-      rect.setAttribute('x', box.x);
-      rect.setAttribute('y', box.y);
-      rect.setAttribute('width', box.w);
-      rect.setAttribute('height', box.h);
-      const hits = [...this.boxes].filter(([, b]) => b.x < box.x + box.w && b.x + b.w > box.x && b.y < box.y + box.h && b.y + b.h > box.y).map(([id]) => id);
-      result = mode === 'replace' ? new Set(hits) : new Set(base);
-      for (const id of hits) {
-        if (mode === 'remove') result.delete(id);
-        else result.add(id);
-      }
-      for (const [id, n] of this.nodeEls) n.g.classList.toggle('selected', result.has(id));
+    return s;
+  }
+
+  // Diagram coordinates of a pointer.
+  #point(e) {
+    const r = this.svgEl.getBoundingClientRect();
+    const v = this.view;
+    return { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };
+  }
+
+  // One pointer: drag pans, and with shift/ctrl/⌘ (or in select mode) draws
+  // a selection box instead; Alt/⌥ makes the box take away from the
+  // selection. Two pointers: pinch to zoom and pan.
+  #down(e) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.pointers.size === 2) {
+      this.#endMarquee();
+      this.svgEl.classList.remove('panning');
+      const [a, b] = [...this.pointers.values()];
+      const r = this.svgEl.getBoundingClientRect();
+      this.gesture = {
+        type: 'pinch',
+        d: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        mx: (a.x + b.x) / 2 - r.left,
+        my: (a.y + b.y) / 2 - r.top,
+        view: { ...this.view },
+      };
+      for (const id of this.pointers.keys()) this.#capture(id);
+      return;
+    }
+    if (this.pointers.size > 2) return;
+    this.suppressClick = false;
+    const select = e.shiftKey || e.metaKey || e.ctrlKey || e.altKey || this.selectMode;
+    this.gesture = {
+      type: select ? 'marquee' : 'pan',
+      id: e.pointerId,
+      sx: e.clientX,
+      sy: e.clientY,
+      threshold: e.pointerType === 'touch' ? 8 : 4,
+      active: false,
+      view: { x: this.view.x, y: this.view.y },
+      mode: e.altKey ? 'remove' : 'add',
+      start: this.#point(e),
+      base: new Set(this.selected),
+      result: null,
+      rect: null,
     };
-    const end = (ev) => {
-      svgEl.removeEventListener('pointermove', move);
-      svgEl.removeEventListener('pointerup', end);
-      svgEl.removeEventListener('pointercancel', end);
-      if (!rect) return;
-      rect.remove();
-      this.suppressClick = ev.type === 'pointerup';
-      this.onMarquee([...result]);
-    };
-    svgEl.addEventListener('pointermove', move);
-    svgEl.addEventListener('pointerup', end);
-    svgEl.addEventListener('pointercancel', end);
-    e.preventDefault(); // no text selection while dragging
+    if (!e.target.closest('.node')) e.preventDefault(); // no text selection while dragging
+  }
+
+  #move(e) {
+    const p = this.pointers.get(e.pointerId);
+    if (!p) return;
+    p.x = e.clientX;
+    p.y = e.clientY;
+    const g = this.gesture;
+    if (!g) return;
+    if (g.type === 'pinch') {
+      const [a, b] = [...this.pointers.values()];
+      const r = this.svgEl.getBoundingClientRect();
+      const mx = (a.x + b.x) / 2 - r.left;
+      const my = (a.y + b.y) / 2 - r.top;
+      const k = clamp(g.view.k * Math.hypot(a.x - b.x, a.y - b.y) / g.d, ZOOM.min, ZOOM.max);
+      // the diagram point that was under the fingers stays under them
+      this.view.k = k;
+      this.#panTo(mx - (g.mx - g.view.x) * (k / g.view.k), my - (g.my - g.view.y) * (k / g.view.k), false);
+      return;
+    }
+    if (e.pointerId !== g.id) return;
+    if (!g.active) {
+      if (Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < g.threshold) return;
+      g.active = true;
+      this.#capture(e.pointerId); // keep the drag going outside the diagram
+      if (g.type === 'pan') this.svgEl.classList.add('panning');
+      else {
+        g.rect = svg('rect', { class: 'marquee', rx: 4 });
+        this.viewEl.append(g.rect);
+      }
+    }
+    if (g.type === 'pan') {
+      this.#panTo(g.view.x + e.clientX - g.sx, g.view.y + e.clientY - g.sy, false);
+      return;
+    }
+    const q = this.#point(e);
+    const box = { x: Math.min(q.x, g.start.x), y: Math.min(q.y, g.start.y), w: Math.abs(q.x - g.start.x), h: Math.abs(q.y - g.start.y) };
+    g.rect.setAttribute('x', box.x);
+    g.rect.setAttribute('y', box.y);
+    g.rect.setAttribute('width', box.w);
+    g.rect.setAttribute('height', box.h);
+    const hits = [...this.boxes].filter(([, b]) => b.x < box.x + box.w && b.x + b.w > box.x && b.y < box.y + box.h && b.y + b.h > box.y).map(([id]) => id);
+    g.result = new Set(g.base);
+    for (const id of hits) {
+      if (g.mode === 'remove') g.result.delete(id);
+      else g.result.add(id);
+    }
+    for (const [id, n] of this.nodeEls) n.g.classList.toggle('selected', g.result.has(id));
+  }
+
+  #up(e) {
+    if (!this.pointers.delete(e.pointerId)) return;
+    const g = this.gesture;
+    if (!g) return;
+    if (g.type === 'pinch') {
+      // the finger left behind doesn't start a pan
+      this.gesture = null;
+      this.suppressClick = true;
+      return;
+    }
+    if (e.pointerId !== g.id) return;
+    this.gesture = null;
+    this.svgEl.classList.remove('panning');
+    if (!g.active) return;
+    this.suppressClick = e.type === 'pointerup';
+    if (g.type === 'marquee') {
+      g.rect.remove();
+      this.onMarquee([...g.result]);
+    }
+  }
+
+  #endMarquee() {
+    const g = this.gesture;
+    if (g?.type !== 'marquee' || !g.active) return;
+    g.rect.remove();
+    for (const [id, n] of this.nodeEls) n.g.classList.toggle('selected', this.selected.has(id));
+  }
+
+  #capture(pointerId) {
+    try {
+      this.svgEl.setPointerCapture(pointerId);
+    } catch {
+      // pointer already gone
+    }
   }
 
   // FLIP: start each surviving node where it was and let it glide into place;
   // new nodes and the streams fade in once things have settled.
   #animate(before, edges) {
+    const k = this.view.k; // the nodes' own coordinates are scaled by the zoom
     for (const [id, n] of this.nodeEls) {
       const was = before.get(id);
       if (!was) {
@@ -419,8 +636,8 @@ export class FlowView {
         continue;
       }
       const now = n.pool.getBoundingClientRect();
-      const dx = was.left - now.left;
-      const dy = was.top - now.top;
+      const dx = (was.left - now.left) / k;
+      const dy = (was.top - now.top) / k;
       if (Math.abs(dx) + Math.abs(dy) < 1) continue;
       n.inner.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
         { duration: 520, easing: 'cubic-bezier(.2,.75,.25,1)' });

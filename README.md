@@ -26,15 +26,15 @@ Other affected monitors (3):
 - **Hierarchical, root-cause alerting.** A monitor is only checked when its parents are up. When something fails, its parents are re-checked first, so the alert always names the highest failing monitor.
 - **Multiple parents.** A monitor can depend on several parents. Choose whether it's blocked when *any* parent is down (it depends on all of them) or only when *every* parent is down (redundant paths, e.g. two WAN links).
 - **Parents and dependents stay in sync.** Add a parent to a monitor and it shows up as that parent's dependent automatically, and the reverse works too.
-- **Edit mode.** Drag a monitor onto another to nest it. Hold <kbd>Alt</kbd>/<kbd>⌥</kbd> to add an extra parent instead of moving it. On touch screens, use the move (⇅) button. Loops are rejected.
+- **Edit mode.** Drag a monitor onto another to nest it. Hold <kbd>Alt</kbd>/<kbd>⌥</kbd> to add an extra parent instead of moving it. Shift-click several to move them together. On touch screens, use the move (⇅) button. Loops are rejected.
 - **Recovery cascades downward.** When a monitor recovers you get a *Resolved* message, and the level beneath it is re-checked immediately, one level at a time.
 - **Heartbeat history** like Uptime Kuma: heartbeat bars, a response-time chart (1h–30d), 24h/30d uptime, and an event log. Retention is configurable.
 - **Monitor types:** HTTP(S) (status codes, keyword), TCP port, ping, DNS (including SRV), Home Assistant entity state, Minecraft Java server (follows SRV records, shows players), push (heartbeat URL), and group (a plain folder).
 - **Notifications:** Home Assistant notify services, ntfy, Discord, Slack, Telegram, Pushover, Gotify, generic JSON webhook, email (SMTP).
-- **Water-themed UI.** A live "falls" diagram where healthy streams flow with a blue glow, streams below a failure run dry, and blocked branches go still. Click a monitor to trace just its upstream and downstream, and expand it for a details panel.
+- **Water-themed UI.** A live "falls" diagram where healthy streams flow with a blue glow, streams below a failure run dry, and blocked branches go still. Drag to move around it and zoom like a map. Click a monitor to trace just its upstream and downstream, and expand it for a details panel.
 - **Icons.** HTTP monitors show their site's favicon automatically. You can also choose a built-in icon, an emoji, an image URL or upload your own.
 - **CSV import & export.** Move all your monitors to another install, or edit many at once in a spreadsheet. An export imports as it is. See the [CSV guide](docs/csv.md).
-- **Tags.** Coloured tags on each monitor, a tag filter for the list and the falls, and bulk tagging: shift-click or drag a box over monitors in the falls, then add or remove tags, optionally including everything downstream.
+- **Tags.** Coloured tags on each monitor, a tag filter for the list and the falls (matching any or all of the chosen tags), and bulk tagging: shift-click monitors or shift-drag a box over them, then add or remove tags, optionally including everything downstream.
 
 ## Install
 

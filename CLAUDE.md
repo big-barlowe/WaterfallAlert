@@ -35,6 +35,7 @@ waterfall_alert/             the add-on (Supervisor build context)
     test/engine.test.js      node:test scenarios for the hierarchy logic
     test/icons.test.js       favicon discovery and icon cache, with a fake `request`
     test/minecraft.test.js   Server List Ping against a fake server, SRV resolution
+    test/move.test.js        bulk move route: ride-along subtrees, from-parent semantics, rollback
     test/tags.test.js        tag routes through createApi(), with a real Store and Engine
     test/transfer.test.js    CSV round trip into a fresh store, import modes, rollback on errors
 docs/csv.md                  user guide for the CSV format (linked from the Settings page)
@@ -72,6 +73,8 @@ To look at the UI: headless Chrome screenshots work (`--headless=new --virtual-t
 
 Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are just the reverse view, which is why adding a parent automatically lists the monitor as that parent's dependent. Cycles are rejected in `api.js` (`applyEdges` → `Graph.hasCycle`), and the form hides options that would create one.
 
+Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: [{id, fromParentId}], toParentId, link}`; the single `api/monitors/:id/move` route uses it too). A missing `fromParentId` (picked in the Falls) replaces all parents; a monitor whose from-parent is also being moved is left alone ("along"), so subtrees keep their shape. All in one `store.tx`.
+
 ## Icons
 
 - A monitor's `icon` column holds a spec: `''` automatic (favicon for HTTP, the status-reply icon for Minecraft, folder for groups), `none`, `builtin:<name>`, `emoji:<text>`, `url:<url>`, `upload`. Parsing and validation are in `src/icons.js`.
@@ -84,7 +87,7 @@ Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are j
 
 - `tags(id, name, color)` (names unique, case-insensitive) and `monitor_tags`. Tags have nothing to do with checking; they are display and filtering only, so tag changes call `engine.touch()`, not `reload()`.
 - `/api/state` carries `tags` (all of them) and each monitor's `tags` (ids). `POST api/tags/:id/apply {monitorIds, downstream, remove}` is the bulk path; monitor POST/PUT take `tagIds` and `tagsDownstream` (adds only the *newly added* tags to every descendant).
-- Tag filter (`ui.tagFilter`, in localStorage): `filterView()` in app.js returns `match` (monitors with any selected tag) and `show` (match + all ancestors). Ancestors that don't match get `.context` and are drawn faded, in both the tree and the Falls.
+- Tag filter (`ui.tagFilter` and `ui.tagMatch` = `any`|`all`, in localStorage): `filterView()` in app.js returns `match` (monitors with any/all of the selected tags) and `show` (match + all ancestors). Ancestors that don't match get `.context` and are drawn faded, in both the tree and the Falls.
 - Tag colours are set per element with the `--tag` custom property and mixed with `color-mix()` in CSS. `h()` routes `--*` style keys through `style.setProperty`.
 
 ## CSV import & export (transfer.js)
@@ -99,7 +102,9 @@ Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are j
 
 - `render(monitors, focusId, {selected, selectMode})`: with a focus, only `lineage()` (ancestors + descendants) is laid out. The structure is rebuilt only when the topology key changes (ids, names, edges, icons, tags, focus); `#paint` updates status, selection and `.context` classes in place so animations don't restart.
 - Monitors passed in carry `tagList` (`[{name, color}]`) and `context`. When any shown node has tags, every node grows to `TAGGED_H` for a row of pills (widths measured on a canvas; overflow becomes `+N`).
-- Selection (`ui.selected`) is owned by app.js and pruned to the nodes on screen. Shift/ctrl/⌘-click or select mode → `onToggle`; dragging on empty water draws a marquee (`#marquee`, mouse/pen only unless select mode, which also sets `touch-action: none`) → `onMarquee(ids)`. The click that ends a drag is swallowed via `suppressClick`.
+- It is a map: the svg fills `.flow-map` and everything sits in `g.viewport`, positioned with a CSS transform from `view = {k, x, y, h, key, auto}`. app.js owns that object (`ui.flowView`) so zoom/position survive navigation. While `auto`, `#fit()` sizes the box and fits the diagram; it re-fits whenever `key` (focus + shown ids) changes. Pan/zoom set `auto = false`. Pointer coordinates go through `#point()` (manual inverse of the view), and the FLIP deltas are divided by `k`.
+- Gestures (`#down/#move/#up`): one pointer pans, or with shift/ctrl/⌘/alt or in select mode draws a marquee (alt removes) → `onMarquee(ids)`; two pointers pinch. Wheel zooms only with ctrl/⌘ (trackpad pinch sends ctrlKey), otherwise the page scrolls and a hint shows. `touch-action: none` on the svg. A drag that started on a node still pans; the click that ends any drag is swallowed via `#swallowClick()`, which `#down` resets.
+- Selection (`ui.selected`) is owned by app.js and shared with the sidebar tree (shift/ctrl/⌘-click rows). `ui.selFrom` remembers the parent of the tree row a monitor was picked under, for moves. `pruneSelection()` drops monitors that are gone or filtered out.
 - The selection bar sits *below* the diagram and is sticky, so showing it never moves the nodes (it used to be above, and the jump made box-selecting a second time miss).
 - On a rebuild, surviving nodes FLIP from their old screen position. They are positioned via the outer `g`'s `transform` attribute and animated via CSS transforms on the inner `.node-inner`, because a CSS transform on the outer one would override the attribute.
 - Focus state lives in `ui.focus`/`ui.info` in app.js and is mirrored into the hash with `history.replaceState`. A real hash change would re-route and rebuild the diagram without the animation.

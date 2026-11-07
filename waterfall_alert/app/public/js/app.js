@@ -3,7 +3,7 @@ import { FlowView, lineage } from './flow.js';
 import { iconEl } from './icons.js';
 import { heartbeatBar, responseChart } from './chart.js';
 import { renderMonitorForm, renderNotificationForm } from './forms.js';
-import { tagPill, colorPicker, newTagDialog } from './tags.js';
+import { tagPill, colorPicker, newTagDialog, matchIcon, TAG_MATCH } from './tags.js';
 
 const POLL_MS = 3000;
 const $ = (sel) => document.querySelector(sel);
@@ -18,10 +18,14 @@ const ui = {
   drag: null,
   focus: null, // falls diagram: monitor whose upstream/downstream is shown
   info: null,  // falls diagram: monitor whose details panel is open
-  tagFilter: new Set(storage('tagFilter', [])), // tag ids; show monitors with any of them
-  selected: new Set(), // falls diagram: monitors picked for tagging
-  selectMode: false,   // falls diagram: clicks select instead of focusing
+  tagFilter: new Set(storage('tagFilter', [])), // tag ids
+  tagMatch: storage('tagMatch', 'any'), // 'any' of the filter's tags (union) or 'all' of them (intersection)
+  // Monitors picked for tagging or moving, in the Falls or the monitor list.
+  selected: new Set(),
+  selFrom: new Map(), // id -> the parent of the list row it was picked under
+  selectMode: false,  // falls diagram: clicks select instead of focusing
   tagDownstream: storage('tagDownstream', false),
+  flowView: {},       // falls diagram zoom and position, kept across visits
 };
 
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true });
@@ -29,11 +33,14 @@ const children = (m) => m.children.map((c) => state.byId.get(c)).filter(Boolean)
 
 const tagsOf = (m) => m.tags.map((t) => state.tagById.get(t)).filter(Boolean);
 
-// With a tag filter: the monitors carrying any of the tags (`match`), plus
-// everything above them (`show`) so the hierarchy still reads. null = no filter.
+// With a tag filter: the monitors carrying any (or all) of the tags
+// (`match`), plus everything above them (`show`) so the hierarchy still
+// reads. null = no filter.
 function filterView() {
   if (!ui.tagFilter.size) return null;
-  const match = new Set(state.monitors.filter((m) => m.tags.some((t) => ui.tagFilter.has(t))).map((m) => m.id));
+  const wanted = [...ui.tagFilter];
+  const hit = ui.tagMatch === 'all' ? (m) => wanted.every((t) => m.tags.includes(t)) : (m) => m.tags.some((t) => ui.tagFilter.has(t));
+  const match = new Set(state.monitors.filter(hit).map((m) => m.id));
   const show = new Set(match);
   const queue = [...match];
   while (queue.length) {
@@ -47,11 +54,45 @@ function filterView() {
   return { match, show };
 }
 
-function setTagFilter(ids) {
+function setTagFilter(ids, match = ui.tagMatch) {
   ui.tagFilter = new Set(ids);
+  ui.tagMatch = match;
   store('tagFilter', [...ui.tagFilter]);
+  store('tagMatch', match);
+  selectionChanged();
+}
+
+// ---- selection --------------------------------------------------------------
+
+// Shared by the Falls and the monitor list. Only monitors that exist and
+// pass the tag filter stay selected, so nothing hidden gets tagged or moved.
+function pruneSelection() {
+  const vis = filterView();
+  for (const id of ui.selected) if (!state.byId.has(id) || (vis && !vis.show.has(id))) ui.selected.delete(id);
+  for (const id of ui.selFrom.keys()) if (!ui.selected.has(id)) ui.selFrom.delete(id);
+}
+
+function selectionChanged() {
+  pruneSelection();
   renderTree();
   if (ui.route?.name === 'dashboard') renderDashboard(true);
+}
+
+function setSelection(ids) {
+  ui.selected = new Set(ids);
+  selectionChanged();
+}
+
+// `from` is the parent of the list row it was picked under (undefined from
+// the Falls, where a monitor isn't under one particular parent).
+function toggleSelected(id, from) {
+  if (ui.selected.has(id)) ui.selected.delete(id);
+  else {
+    ui.selected.add(id);
+    if (from === undefined) ui.selFrom.delete(id);
+    else ui.selFrom.set(id, from);
+  }
+  selectionChanged();
 }
 
 function descendantsOf(id) {
@@ -88,6 +129,7 @@ async function poll() {
         store('tagFilter', known);
       }
       state.loaded = true;
+      pruneSelection();
       onState();
     }
   } catch {
@@ -139,6 +181,7 @@ function renderTree() {
   const vis = filterView();
   treeView = vis;
   renderTagFilter();
+  renderTreeSelect();
   $('#tree-tools').classList.toggle('editing', ui.editMode);
   $('#edit-toggle').textContent = ui.editMode ? 'Done' : 'Edit';
   $('#edit-toggle').setAttribute('aria-pressed', String(ui.editMode));
@@ -158,7 +201,7 @@ function renderTree() {
   }
 
   if (vis && !vis.match.size) {
-    fill(host, h('p', { class: 'muted pad' }, 'No monitors have ', ui.tagFilter.size > 1 ? 'any of these tags.' : 'this tag.'));
+    fill(host, h('p', { class: 'muted pad' }, 'No monitors have ', ui.tagFilter.size > 1 ? `${ui.tagMatch} of these tags.` : 'this tag.'));
     return;
   }
 
@@ -176,7 +219,7 @@ function renderTree() {
       ondrop: (e) => {
         e.preventDefault();
         e.currentTarget.classList.remove('over');
-        if (ui.drag) move(ui.drag.id, ui.drag.from, null, false);
+        if (ui.drag) move(ui.drag, null, false);
       },
     }, 'Drop here to move to the top level') : null,
     h('div', { class: 'branch root' }, roots.map((m) => branch(m, null, String(m.id), 0))),
@@ -210,8 +253,23 @@ function renderTagFilter() {
         },
       });
     }),
+    on && state.tags.length > 1 ? matchToggle() : null,
     on ? h('button', { class: 'linkish', onclick: () => setTagFilter([]) }, 'Clear') : null,
     h('a', { class: 'linkish', href: '#/tags' }, 'Manage'));
+}
+
+// Any of the tags (union) or all of them (intersection).
+function matchToggle() {
+  return h('span', { class: 'match-toggle', role: 'radiogroup', 'aria-label': 'Monitors must have' },
+    Object.entries(TAG_MATCH).map(([mode, { label, title }]) => h('button', {
+      type: 'button',
+      class: `match-btn${ui.tagMatch === mode ? ' on' : ''}`,
+      role: 'radio',
+      'aria-checked': String(ui.tagMatch === mode),
+      'aria-label': label,
+      title,
+      onclick: () => setTagFilter(ui.tagFilter, mode),
+    }, matchIcon(mode))));
 }
 
 function tagDots(m) {
@@ -237,20 +295,27 @@ function row(m, parentId, path, depth, hasKids) {
   const otherParents = m.parents.filter((p) => p !== parentId).map((p) => state.byId.get(p)?.name).filter(Boolean);
 
   const el = h('div', {
-    class: `row ${m.status}${active ? ' active' : ''}${treeView && !treeView.match.has(m.id) ? ' context' : ''}`,
+    class: `row ${m.status}${active ? ' active' : ''}${ui.selected.has(m.id) ? ' selected' : ''}${treeView && !treeView.match.has(m.id) ? ' context' : ''}`,
     draggable: ui.editMode ? 'true' : null,
     ondragstart: (e) => {
-      ui.drag = { id: m.id, from: parentId };
+      ui.drag = dragSet(m.id, parentId);
       e.dataTransfer.effectAllowed = 'copyMove';
-      e.dataTransfer.setData('text/plain', String(m.id));
+      e.dataTransfer.setData('text/plain', ui.drag.ids.join(','));
       el.classList.add('dragging');
+      if (ui.drag.ids.length > 1) {
+        document.querySelectorAll('#tree .row.selected').forEach((r) => r.classList.add('dragging'));
+        const ghost = h('div', { class: 'drag-ghost' }, `${ui.drag.ids.length} monitors`);
+        document.body.append(ghost);
+        e.dataTransfer.setDragImage(ghost, 14, 14);
+        setTimeout(() => ghost.remove());
+      }
     },
     ondragend: () => {
       ui.drag = null;
       document.querySelectorAll('.drop-target,.dragging').forEach((n) => n.classList.remove('drop-target', 'dragging'));
     },
     ondragover: (e) => {
-      if (!ui.drag || !canDrop(ui.drag.id, m.id)) return;
+      if (!ui.drag || !canDrop(ui.drag, m.id)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = e.altKey ? 'copy' : 'move';
       el.classList.add('drop-target');
@@ -259,7 +324,7 @@ function row(m, parentId, path, depth, hasKids) {
     ondrop: (e) => {
       e.preventDefault();
       el.classList.remove('drop-target');
-      if (ui.drag && canDrop(ui.drag.id, m.id)) move(ui.drag.id, ui.drag.from, m.id, e.altKey);
+      if (ui.drag && canDrop(ui.drag, m.id)) move(ui.drag, m.id, e.altKey);
     },
   },
   h('button', {
@@ -276,7 +341,16 @@ function row(m, parentId, path, depth, hasKids) {
     },
   }, hasKids ? (open ? '▾' : '▸') : ''),
   ui.editMode ? h('span', { class: 'grip', 'aria-hidden': 'true' }, '⠿') : null,
-  h('a', { class: 'row-main', href: `#/monitor/${m.id}`, draggable: 'false' },
+  h('a', {
+    class: 'row-main',
+    href: `#/monitor/${m.id}`,
+    draggable: 'false',
+    onclick: (e) => {
+      if (!e.shiftKey && !e.metaKey && !e.ctrlKey) return;
+      e.preventDefault();
+      toggleSelected(m.id, parentId);
+    },
+  },
     // With icons, the status dot sits on the icon's corner to save width.
     ui.anyIcons
       ? h('span', { class: `row-icon${m.icon ? '' : ' bare'}` }, iconEl(m.icon, 18), h('span', { class: `dot ${m.status}`, title: STATUS_LABEL[m.status] }))
@@ -287,7 +361,7 @@ function row(m, parentId, path, depth, hasKids) {
   ui.editMode
     ? h('span', { class: 'row-actions' },
       h('button', { class: 'icon-btn', title: 'Add a monitor under this one', onclick: () => go(`#/add?parent=${m.id}`) }, '+'),
-      h('button', { class: 'icon-btn', title: 'Move…', onclick: () => moveDialog(m, parentId) }, '⇅'),
+      h('button', { class: 'icon-btn', title: 'Move…', onclick: () => moveDialog(dragSet(m.id, parentId)) }, '⇅'),
       h('button', { class: 'icon-btn', title: 'Edit settings', onclick: () => go(`#/monitor/${m.id}/edit`) }, '✎'),
       parentId != null ? h('button', {
         class: 'icon-btn',
@@ -301,17 +375,35 @@ function row(m, parentId, path, depth, hasKids) {
   return el;
 }
 
-function canDrop(dragId, targetId) {
-  return dragId !== targetId && !descendantsOf(dragId).has(targetId);
+// What dragging (or ⇅ on) a row moves: the row's monitor, or the whole
+// selection when the row is part of it. `from` maps each id to the parent
+// it is moved away from (undefined = all of them, for monitors picked in
+// the Falls).
+function dragSet(id, parentId) {
+  const ids = ui.selected.has(id) && ui.selected.size > 1 ? [...ui.selected] : [id];
+  const from = new Map(ids.map((x) => [x, ui.selFrom.get(x)]));
+  from.set(id, parentId);
+  return { ids, from };
 }
 
-async function move(id, fromParentId, toParentId, link) {
-  if (fromParentId === toParentId) return;
+const selectionSet = () => ({ ids: [...ui.selected], from: new Map([...ui.selected].map((x) => [x, ui.selFrom.get(x)])) });
+
+function canDrop({ ids }, targetId) {
+  return !ids.includes(targetId) && !ids.some((id) => descendantsOf(id).has(targetId));
+}
+
+async function move({ ids, from }, toParentId, link) {
+  if (ids.length === 1 && from.get(ids[0]) === toParentId) return;
   try {
-    await api(`monitors/${id}/move`, { method: 'POST', body: { fromParentId, toParentId, link } });
-    const m = state.byId.get(id);
+    const res = await api('monitors/move', {
+      method: 'POST',
+      body: { moves: ids.map((id) => ({ id, fromParentId: from.get(id) })), toParentId, link },
+    });
     const target = toParentId == null ? 'the top level' : state.byId.get(toParentId)?.name;
-    toast(link ? `${m.name} is now also under ${target}` : `Moved ${m.name} to ${target}`, 'success');
+    const what = ids.length === 1 ? state.byId.get(ids[0])?.name : `${res.moved} monitor${res.moved === 1 ? '' : 's'}`;
+    const along = res.along ? `, with ${res.along} more under ${res.moved === 1 ? 'it' : 'them'}` : '';
+    toast(link ? `${what} ${res.moved === 1 ? 'is' : 'are'} now also under ${target}${along}` : `Moved ${what} to ${target}${along}`, 'success');
+    if (!link) for (const id of ids) ui.selFrom.delete(id); // they are under new parents now
     if (toParentId != null) {
       // make sure the new location is visible
       for (const k of [...ui.collapsed]) if (k.endsWith(`/${toParentId}`) || k === String(toParentId)) ui.collapsed.delete(k);
@@ -332,22 +424,42 @@ async function unlink(parentId, childId) {
   }
 }
 
-// Touch-friendly alternative to drag and drop.
-function moveDialog(m, fromParentId) {
-  const blocked = descendantsOf(m.id);
-  const options = state.monitors.filter((x) => x.id !== m.id && !blocked.has(x.id)).sort(byName);
+// Touch-friendly alternative to drag and drop, also for the whole selection.
+function moveDialog(set) {
+  const { ids, from } = set;
+  const blocked = new Set(ids.flatMap((id) => [id, ...descendantsOf(id)]));
+  const options = state.monitors.filter((x) => !blocked.has(x.id)).sort(byName);
+  const one = ids.length === 1 ? state.byId.get(ids[0]) : null;
+  const fromParentId = one ? from.get(one.id) : undefined;
   const select = h('select', { id: 'move-target' },
     h('option', { value: '' }, '— Top level (no parent) —'),
     options.map((o) => h('option', { value: o.id, selected: o.id === fromParentId }, o.name)));
   const keep = h('input', { type: 'checkbox', id: 'move-keep' });
-  modal(`Move ${m.name}`, h('div', null,
+  modal(one ? `Move ${one.name}` : `Move ${ids.length} monitors`, h('div', null,
     h('div', { class: 'field' }, h('label', { for: 'move-target' }, 'Place under'), select),
-    fromParentId != null ? h('label', { class: 'check' }, keep,
-      h('span', null, `Keep it under ${state.byId.get(fromParentId)?.name} too (add as an extra parent)`)) : null),
+    one && fromParentId != null ? h('label', { class: 'check' }, keep,
+      h('span', null, `Keep it under ${state.byId.get(fromParentId)?.name} too (add as an extra parent)`)) : null,
+    one ? null : [
+      h('label', { class: 'check' }, keep, h('span', null, 'Keep their current parents too (add as an extra parent)')),
+      h('p', { class: 'muted small' }, 'A selected monitor whose parent is selected too stays under it, so whole branches move together.'),
+    ]),
   [{
     label: 'Move',
-    onClick: () => move(m.id, fromParentId, select.value ? Number(select.value) : null, keep.checked && select.value !== ''),
+    onClick: () => move(set, select.value ? Number(select.value) : null, keep.checked && select.value !== ''),
   }]);
+}
+
+function renderTreeSelect() {
+  const box = $('#tree-select');
+  const n = ui.selected.size;
+  box.hidden = !n;
+  if (!n) return fill(box);
+  fill(box,
+    h('div', { class: 'tree-select-head' },
+      h('strong', null, `${n} selected`),
+      h('button', { class: 'btn small', onclick: () => moveDialog(selectionSet()) }, 'Move…'),
+      h('button', { class: 'btn small ghost', onclick: () => setSelection([]) }, 'Clear')),
+    h('p', { class: 'muted small' }, ui.editMode ? 'Drag any of them to move them all.' : 'Shift-click to add or remove more. Tag them in the Falls.'));
 }
 
 // ---- dashboard --------------------------------------------------------------
@@ -358,13 +470,14 @@ let eventsCache = { at: 0, version: -1, list: [] };
 async function renderDashboard(isUpdate = false) {
   const main = $('#main');
   if (!isUpdate || !main.querySelector('.dashboard')) {
-    const flowBox = h('div', { class: 'flow-scroll' });
+    const flowBox = h('div', { class: 'flow-map' });
     flow = new FlowView(flowBox, {
       onSelect: selectNode,
       onExpand: expandNode,
       onClear: () => (ui.selected.size ? setSelection([]) : setFocus(null, null)),
-      onToggle: toggleSelected,
+      onToggle: (id) => toggleSelected(id),
       onMarquee: setSelection,
+      view: ui.flowView,
     });
     fill(main, h('div', { class: 'dashboard' },
       h('div', { class: 'stat-row', id: 'dash-stats' }),
@@ -379,7 +492,7 @@ async function renderDashboard(isUpdate = false) {
             h('button', {
               id: 'select-toggle',
               class: 'btn small',
-              title: 'Select monitors to tag them. Shortcut: shift-click, or drag a box over empty space.',
+              title: 'Select monitors to tag or move them. Shortcut: shift-click, or hold shift and drag a box.',
               onclick: () => {
                 ui.selectMode = !ui.selectMode;
                 if (!ui.selectMode) ui.selected.clear();
@@ -407,8 +520,6 @@ async function renderDashboard(isUpdate = false) {
   const shown = state.monitors.filter((m) => !vis || vis.show.has(m.id))
     .map((m) => ({ ...m, tagList: tagsOf(m), context: Boolean(vis && !vis.match.has(m.id)) }));
   flow.render(shown, ui.focus, { selected: ui.selected, selectMode: ui.selectMode });
-  // Never tag something that isn't on screen.
-  for (const id of ui.selected) if (!flow.nodeEls.has(id)) ui.selected.delete(id);
   const toggle = $('#select-toggle');
   toggle.setAttribute('aria-pressed', String(ui.selectMode));
   toggle.textContent = ui.selectMode ? 'Done selecting' : 'Select';
@@ -441,17 +552,6 @@ function expandNode(id) {
   setFocus(id, ui.info === id ? null : id);
 }
 
-function setSelection(ids) {
-  ui.selected = new Set(ids);
-  renderDashboard(true);
-}
-
-function toggleSelected(id) {
-  if (ui.selected.has(id)) ui.selected.delete(id);
-  else ui.selected.add(id);
-  renderDashboard(true);
-}
-
 async function applyTag(tag, ids, remove) {
   try {
     const res = await api(`tags/${tag.id}/apply`, { method: 'POST', body: { monitorIds: ids, downstream: ui.tagDownstream, remove } });
@@ -472,7 +572,7 @@ function renderSelectBar() {
   if (box.hidden) return fill(box);
   if (!ids.length) {
     return fill(box, h('span', { class: 'muted small' },
-      'Tap monitors to select them, or drag a box over empty space. Then pick tags to add or remove.'));
+      'Tap monitors to select them, or drag a box around them. Then pick tags to add or remove. Two fingers move and zoom the map.'));
   }
   const targets = new Set(ids);
   if (ui.tagDownstream) for (const id of ids) for (const d of descendantsOf(id)) targets.add(d);
@@ -524,8 +624,10 @@ function setFocus(focus, info) {
 
 function renderFocusBar(vis) {
   const f = state.byId.get(ui.focus);
+  const filtered = state.tags.filter((t) => ui.tagFilter.has(t.id));
   const filterChip = vis ? h('span', { class: 'focus-chip filter-chip' },
-    state.tags.filter((t) => ui.tagFilter.has(t.id)).map((t) => tagPill(t)),
+    filtered.length > 1 ? h('span', { class: 'filter-match', title: TAG_MATCH[ui.tagMatch].title }, matchIcon(ui.tagMatch)) : null,
+    filtered.map((t) => tagPill(t)),
     h('span', { class: 'muted' }, `${vis.match.size} of ${state.monitors.length}`),
     h('button', { class: 'chip-x', 'aria-label': 'Clear the tag filter', title: 'Clear the tag filter', onclick: () => setTagFilter([]) }, '×')) : null;
   if (!f) {
@@ -860,7 +962,7 @@ async function renderTags() {
     h('div', { class: 'page-head' },
       h('h1', null, 'Tags'),
       h('button', { class: 'btn primary', onclick: () => newTagDialog(tags, reload) }, '+ New tag'),
-      h('p', { class: 'muted' }, 'Group monitors across the hierarchy, by site, owner or anything else. Filter by tag in the sidebar. To tag several monitors at once, select them in the Falls: shift-click, or drag a box over empty space.')),
+      h('p', { class: 'muted' }, 'Group monitors across the hierarchy, by site, owner or anything else. Filter by tag in the sidebar: pick several tags and choose whether a monitor needs any of them or all of them. To tag several monitors at once, select them: shift-click them in the Falls or the monitor list, or shift-drag a box in the Falls.')),
     tags.length
       ? h('div', { class: 'card tag-list' }, tags.map(editor))
       : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No tags yet.'))));
@@ -1072,8 +1174,9 @@ $('#search').addEventListener('input', (e) => {
 });
 window.addEventListener('hashchange', route);
 document.addEventListener('keydown', (e) => {
-  if (e.key !== 'Escape' || ui.route?.name !== 'dashboard' || document.querySelector('.modal-back')) return;
+  if (e.key !== 'Escape' || document.querySelector('.modal-back')) return;
   if (ui.selected.size) setSelection([]);
+  else if (ui.route?.name !== 'dashboard') return;
   else if (ui.selectMode) {
     ui.selectMode = false;
     renderDashboard(true);

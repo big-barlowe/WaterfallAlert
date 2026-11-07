@@ -1,4 +1,4 @@
-import { api, h, modal, toast } from './util.js';
+import { api, h, svg, modal, toast } from './util.js';
 
 // Preset tag colours. Any #rrggbb works; these just read well on the dark
 // background and stay clear of the status colours.
@@ -16,6 +16,22 @@ export function tagPill(tag, { onclick, title, extra, pressed, cls = '' } = {}) 
     'aria-pressed': pressed,
     onclick,
   }, h('span', { class: 'tag-name' }, tag.name), extra);
+}
+
+// How a filter with several tags combines them: 'any' (union, like a full
+// outer join) or 'all' (intersection, like an inner join).
+export const TAG_MATCH = {
+  any: { label: 'Any', title: 'Any tag: monitors with at least one of the selected tags (union / full outer join)' },
+  all: { label: 'All', title: 'All tags: only monitors with every selected tag (intersection / inner join)' },
+};
+
+// Two overlapping circles with the matching part shaded.
+export function matchIcon(mode) {
+  const circles = 'M13.5 7a5.5 5.5 0 1 1-11 0a5.5 5.5 0 1 1 11 0ZM19.5 7a5.5 5.5 0 1 1-11 0a5.5 5.5 0 1 1 11 0Z';
+  const lens = 'M11 2.39A5.5 5.5 0 0 1 11 11.61A5.5 5.5 0 0 1 11 2.39Z';
+  return svg('svg', { class: `venn ${mode}`, viewBox: '0 0 22 14', width: 22, height: 14, 'aria-hidden': 'true' },
+    svg('path', { class: 'venn-fill', d: mode === 'all' ? lens : circles }),
+    svg('path', { class: 'venn-line', d: circles }));
 }
 
 // Swatches plus a custom colour input.

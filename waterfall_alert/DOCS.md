@@ -35,23 +35,31 @@ A *group* is a plain folder. It has no check of its own and never blocks what's 
 ## Arranging monitors
 
 - **Edit button** (above the monitor list): drag a monitor onto another to move it underneath. Hold <kbd>Alt</kbd>/<kbd>⌥</kbd> while dropping to **add** that monitor as an extra parent instead of moving. Drop it on *Drop here to move to the top level* to make it top level. The row buttons are: **+** (add a monitor beneath), **⇅** (move, which also works on touch screens), **✎** (settings) and **⨯** (detach from this parent).
+- **Move several at once:** shift-click (or ctrl/⌘-click) monitors in the list to select them, or select them in the Falls. Then drag any selected row in Edit mode, or press **Move…** in the selection box at the top of the list, and they all move together. A selected monitor whose parent is also selected stays under that parent, so whole branches keep their shape. A monitor selected in the list moves away from the parent it was listed under; one selected in the Falls has all of its parents replaced (unless you choose to keep them).
 - **Monitor settings → Hierarchy**: the *Parent monitors* and *Dependent monitors* lists. They stay in sync: adding a parent here lists this monitor as that parent's dependent. Any choice that would create a loop is hidden.
 
 ## The Falls
 
 The dashboard diagram shows the whole hierarchy as streams: water flows from healthy monitors, runs dry below a monitor that is down, and goes still below blocked or paused ones.
 
+It works like a map:
+
+- **Move around** by dragging. On a touch screen, drag with one finger.
+- **Zoom** with <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + scroll, by pinching on a trackpad or touch screen, or with the **−** and **+** buttons in the corner. Click the percentage for actual size, and the corners button to fit everything in again. A plain scroll still scrolls the page.
+- The diagram starts out fitted to the space, and fits again when you trace a monitor, show everything, or change the tag filter. Your zoom and position are otherwise kept, even when you open a monitor and come back.
+
 - **Click a monitor** to trace it: the diagram shows only what it depends on (upstream) and what depends on it (downstream). Click it again, press <kbd>Esc</kbd>, click empty space or use **Show all** to see everything. **Trace in Falls** on a monitor's page does the same.
 - **The expand button** (top-right corner of a monitor) opens a details panel with its status, response times, heartbeats and its full upstream and downstream lists. Click a monitor in those lists to trace that one instead.
-- **Select monitors** to tag several at once: shift-click (or ctrl/⌘-click) them, or drag a box over empty space. Shift-drag adds to the selection and <kbd>Alt</kbd>/<kbd>⌥</kbd>-drag removes from it. On a touch screen, tap **Select** first. See [Tags](#tags).
+- **Select monitors** to tag or move several at once: shift-click (or ctrl/⌘-click) them, or hold <kbd>Shift</kbd> and drag a box around them. <kbd>Alt</kbd>/<kbd>⌥</kbd>-drag removes from the selection instead. On a touch screen, tap **Select** first; one finger then draws the box and two fingers move and zoom. The selection is shared with the monitor list. See [Tags](#tags) and [Arranging monitors](#arranging-monitors).
 
 ## Tags
 
 Tags are coloured labels for grouping monitors across the hierarchy, for example by site, room or owner. They show as small pills along the bottom of each monitor in the Falls and as coloured dots in the monitor list.
 
-- **Filter:** click tags at the top of the sidebar to show only monitors with any of those tags, in both the list and the Falls. Monitors above a match stay visible, faded, so you can still see what the matches depend on.
+- **Filter:** click tags at the top of the sidebar to show only monitors with those tags, in both the list and the Falls. Monitors above a match stay visible, faded, so you can still see what the matches depend on.
+- **Any or all:** with a filter on, the two Venn-diagram buttons next to the tags choose how several tags combine. **Any** (both circles shaded, a union or full outer join) shows monitors with at least one of the tags. **All** (only the overlap shaded, an intersection or inner join) shows only monitors with every one of them. For example, pick *Cabin* and *Camera* with **All** to see just the cameras at the cabin.
 - **Tag one monitor:** use the Tags field in its settings, or **+ Add tags** in its details panel in the Falls. When you add a tag to a monitor that has dependents, you can also add it to everything downstream (handy for tagging a whole site).
-- **Tag many:** select monitors in the Falls (see above). The selection bar shows every tag: ✓ means all selected monitors have it (click to remove it), `2/5` means some do and `+` means none do (click to add it). Tick **Include downstream** to apply to everything below the selected monitors as well.
+- **Tag many:** select monitors in the Falls or the list (see above). The selection bar shows every tag: ✓ means all selected monitors have it (click to remove it), `2/5` means some do and `+` means none do (click to add it). Tick **Include downstream** to apply to everything below the selected monitors as well.
 - **Manage:** the **Tags** page lets you create, rename, recolour and delete tags. Deleting a tag only removes the label; monitors are not affected.
 
 ## Icons

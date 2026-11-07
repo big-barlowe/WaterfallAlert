@@ -184,15 +184,45 @@ export function createApi({ store, engine, icons }) {
   // new parent while keeping the old one.
   route('POST', '/api/monitors/:id/move', ({ params, body }) => {
     const m = monitorOr404(params.id);
-    const from = body.fromParentId == null ? null : Number(body.fromParentId);
-    const to = body.toParentId == null ? null : Number(body.toParentId);
-    let parents = engine.graph.parentsOf(m.id);
-    if (from != null && !body.link) parents = parents.filter((p) => p !== from);
-    if (to != null && !parents.includes(to)) parents.push(to);
-    store.tx(() => applyEdges(m.id, parents, undefined));
-    engine.reload([m.id]);
+    moveMonitors([{ id: m.id, fromParentId: body.fromParentId ?? null }], body.toParentId, body.link);
     return monitorDetail(store.getMonitor(m.id));
   });
+
+  // The same for several monitors at once: moves = [{id, fromParentId}].
+  // Without a fromParentId (selected in the Falls, not under one particular
+  // parent) a move replaces all of the monitor's parents. A monitor whose
+  // parent is moving too stays under it, so moved subtrees keep their shape.
+  route('POST', '/api/monitors/move', ({ body }) => {
+    if (!Array.isArray(body.moves) || !body.moves.length) throw new HttpError(400, 'Nothing to move');
+    return { ok: true, ...moveMonitors(body.moves, body.toParentId, body.link) };
+  });
+
+  const moveMonitors = (list, toParentId, link) => {
+    const to = toParentId == null ? null : monitorOr404(toParentId).id;
+    const moves = new Map();
+    for (const mv of list) {
+      const id = monitorOr404(mv?.id).id;
+      moves.set(id, mv.fromParentId === undefined ? undefined : mv.fromParentId === null ? null : Number(mv.fromParentId));
+    }
+    if (moves.has(to)) throw new HttpError(400, 'A monitor cannot be moved under itself');
+    let moved = 0;
+    let along = 0;
+    store.tx(() => {
+      for (const [id, from] of moves) {
+        let parents = engine.graph.parentsOf(id);
+        if (from === undefined ? parents.some((p) => moves.has(p)) : moves.has(from)) {
+          along++;
+          continue;
+        }
+        if (!link) parents = from === undefined ? [] : parents.filter((p) => p !== from);
+        if (to != null && !parents.includes(to)) parents.push(to);
+        applyEdges(id, parents, undefined);
+        moved++;
+      }
+    });
+    engine.reload([...moves.keys()]);
+    return { moved, along };
+  };
 
   route('POST', '/api/edges/remove', ({ body }) => {
     store.removeEdge(Number(body.parentId), Number(body.childId));

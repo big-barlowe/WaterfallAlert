@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+
+- **The Falls is now a map.** Drag to move around, and zoom with ctrl/⌘ + scroll, a pinch, or the zoom buttons. It fits itself to the space when you trace a monitor or change the filter, and otherwise keeps your zoom and position.
+- Drawing a selection box in the Falls now needs <kbd>Shift</kbd> held (plain dragging moves the map). On touch screens, **Select** mode still draws boxes with one finger.
+- **Tag filter: any or all.** With several tags in the filter, Venn-diagram buttons choose between monitors with *any* of them (union) and only those with *all* of them (intersection), e.g. *Cabin* + *Camera* for the cabin's cameras.
+- **Move several monitors at once.** Shift-click (or ctrl/⌘-click) monitors in the list to select them, then drag one in Edit mode or use **Move…**. The selection is shared with the Falls, so a box selection there can be moved too. Selected branches move as a whole.
+
 ## 0.5.1
 
 - Running without Home Assistant: a ready-made Docker image, `ghcr.io/big-barlowe/waterfall-alert` (amd64 and arm64), a `compose.yaml` and a [Docker guide](https://github.com/big-barlowe/WaterfallAlert/blob/main/docs/docker.md).
