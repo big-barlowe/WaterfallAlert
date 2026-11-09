@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0
+
+- **SNMP monitors (v1/v2c).** Up when the device answers. Every check also collects what it advertises: system name, description, location, contact and uptime; every interface with status, speed, traffic in and out and errors; CPU, memory and disks where offered; and extra values you list as `Label = OID`. It all shows on the monitor's page, with a summary in its details panel in the Falls. SNMPv3 and alerting on these values are still to come.
+- **All SNMP data.** A button on the monitor's page reads everything the device reports, live and searchable, with readable names for common objects. Add any value to the page (**+ Page**) or to the monitor's card in the Falls (**+ Card**).
+- **Customize.** Hide device facts, interfaces, resources or whole sections you don't need, and pick up to two values for the Falls card, like *CPU 13% · Mem 18%* or an interface's traffic, the way Minecraft cards show players.
+- CSV import and export carry the SNMP settings (`snmp_version`, `community`, `snmp_oids`, `snmp_hide`, `snmp_card`).
+
 ## 0.8.1
 
 - **Much more compact rings layout.** Rings now centre on the first monitor that branches out (e.g. the core switch), with the chain above it as a short trunk, instead of on the top-level monitor. Devices are stacked a few rows deep around their switch, and each monitor sits only as far out as it needs to. A network with a core switch, 14 closets and about 200 devices went from roughly 13,000 px square to about 3,200 × 2,300, so it fits on screen when zoomed out.

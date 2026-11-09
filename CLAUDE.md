@@ -17,10 +17,11 @@ waterfall_alert/             the add-on (Supervisor build context)
     src/validate.js          HttpError, normalizeMonitor/normalizeTag (shared by api.js and transfer.js)
     src/transfer.js          CSV export/import of monitors (CSV_COLUMNS is the single column definition)
     src/csv.js               RFC 4180 parse/write
+    src/snmp.js              SNMP v1/v2c client (BER, GET, GETBULK/GETNEXT walks over UDP); no dependency
     src/engine.js            scheduler + hierarchy logic (the core; read this first)
     src/graph.js             DAG helpers: ancestors/descendants, levels, cycles, subtree
     src/db.js                node:sqlite Store, migrations (PRAGMA user_version)
-    src/checkers/            one function per monitor type -> { ok, ping?, msg }
+    src/checkers/            one function per monitor type -> { ok, ping?, msg, data? }; snmp.js collects interfaces/resources
     src/notifier.js          notification providers + their form field definitions
     src/icons.js             icon specs, favicon discovery, IconCache (cached images in the `icons` table)
     src/status.js            heartbeat status codes
@@ -29,6 +30,8 @@ waterfall_alert/             the add-on (Supervisor build context)
       js/flow.js             SVG "falls" diagram, focus/lineage view, FLIP animation
       js/icons.js            built-in glyphs, iconEl() (HTML) / iconSvg() (inside the diagram)
       js/tags.js             tag pill, colour picker, "new tag" dialog, tagIconView()
+      js/snmp.js             SNMP snapshot cache, Falls summary, monitor-page sections (customize mode), All data browser
+      js/snmp-names.js       readable names and groups for common OIDs (browser only)
       js/filter.js           tag filter expressions (parseTagExpr); no imports, so test/filter.test.js loads it under Node
       js/chart.js            heartbeat bar + response-time chart
       js/forms.js            monitor + notification forms
@@ -37,6 +40,7 @@ waterfall_alert/             the add-on (Supervisor build context)
     test/filter.test.js      tag filter expressions: precedence, not, quoting, error messages
     test/icons.test.js       favicon discovery and icon cache, with a fake `request`
     test/minecraft.test.js   Server List Ping against a fake server, SRV resolution
+    test/snmp.test.js        BER round trip, checker against a fake agent (v1/v2c, tooBig, community), rates, engine data
     test/move.test.js        bulk move route: ride-along subtrees, from-parent semantics, rollback
     test/tags.test.js        tag routes through createApi(), with a real Store and Engine
     test/transfer.test.js    CSV round trip into a fresh store, import modes, rollback on errors
@@ -76,6 +80,13 @@ To look at the UI: headless Chrome screenshots work (`--headless=new --virtual-t
 Edges are stored once (`monitor_edges(parent_id, child_id)`). "Dependents" are just the reverse view, which is why adding a parent automatically lists the monitor as that parent's dependent. Cycles are rejected in `api.js` (`applyEdges` → `Graph.hasCycle`), and the form hides options that would create one.
 
 Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: [{id, fromParentId}], toParentId, link}`; the single `api/monitors/:id/move` route uses it too). A missing `fromParentId` (picked in the Falls) replaces all parents; a monitor whose from-parent is also being moved is left alone ("along"), so subtrees keep their shape. All in one `store.tx`.
+
+## Collected data (SNMP)
+
+- A checker is called as `fn(monitor, { previous })` and may return `data` with its result. The engine stores it (`store.setMonitorData`, table `monitor_data`, one JSON row per monitor) after any check that returned it, and passes it back as `previous` next time; a failed check leaves the last snapshot. `PUT api/monitors/:id` clears it when the type or config changes.
+- **Display settings** are config keys `oids`, `hide` (e.g. `fact:contact`, `if:<name>`, `res:<name>`, `section:<name>`) and `card` (≤ `CARD_MAX` keys: `name`, `uptime`, `ifs`, `cpu`, `memory`, `disk:<name>`, `if:<name>`, `value:<oid>`). They are `DISPLAY_KEYS`: changing them never clears the snapshot. `PUT api/monitors/:id/snmp-display` saves them and reloads the monitor, because the card text is the check's `msg` (`cardText()` in checkers/snmp.js), which `subline()` in flow.js shows for SNMP cards. `GET api/monitors/:id/snmp/walk?start=` returns a page of a live walk of the whole tree for the browser (`#/monitor/:id/snmp`).
+- `GET api/monitors/:id/data` → `{ at, data, display }`. It is not in `/api/state` (too big); the frontend fetches it through `snmpSnapshot(id, lastCheck, onLoad)` in `public/js/snmp.js`, which refetches only when the monitor's `lastCheck` changes.
+- The SNMP checker's uptime test is the system-group GET (half the timeout per try, one retry). Everything else (IF-MIB ifTable/ifXTable columns, HOST-RESOURCES CPU and storage, UCD ssCpuIdle as a CPU fallback, the `oids` config) is best effort within a deadline; failures go into `data.notes`. Rates come from `previous` (32-bit wrap handled, reboots and 64-bit resets skipped).
 
 ## Icons
 

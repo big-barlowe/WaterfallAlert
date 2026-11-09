@@ -1,5 +1,6 @@
 // Input validation shared by the REST routes and the CSV import.
 import { MONITOR_TYPES } from './checkers/index.js';
+import { parseExtraOids, CARD_MAX } from './checkers/snmp.js';
 import { validateIconSpec } from './icons.js';
 
 export class HttpError extends Error {
@@ -32,10 +33,20 @@ export function normalizeMonitor(body, existing) {
   const type = body.type ?? base.type;
   if (!MONITOR_TYPES.includes(type)) throw new HttpError(400, `Unknown monitor type "${type}"`);
   const interval = int(body.interval, base.interval ?? 60, 10, 86400);
+  const config = body.config && typeof body.config === 'object' ? body.config : base.config ?? {};
+  if (type === 'snmp') {
+    badRequest(() => parseExtraOids(config.oids));
+    for (const key of ['hide', 'card']) {
+      const v = config[key];
+      if (v == null) continue;
+      if (!Array.isArray(v) || v.length > 2000 || v.some((x) => typeof x !== 'string' || x.length > 300)) throw new HttpError(400, `${key} must be a list of names`);
+    }
+    if ((config.card?.length ?? 0) > CARD_MAX) throw new HttpError(400, `The card can show at most ${CARD_MAX} values`);
+  }
   return {
     name,
     type,
-    config: body.config && typeof body.config === 'object' ? body.config : base.config ?? {},
+    config,
     interval,
     retries: int(body.retries, base.retries ?? 1, 0, 20),
     retryInterval: int(body.retryInterval, base.retryInterval ?? 20, 5, 86400),

@@ -4,6 +4,13 @@ import { config, isAddon } from './config.js';
 import { decodeDataUrl } from './icons.js';
 import { HttpError, badRequest, int, idList, normalizeMonitor, normalizeTag } from './validate.js';
 import { exportCsv, importCsv, CSV_COLUMNS, CSV_EXAMPLE, csvTemplate } from './transfer.js';
+import { DISPLAY_KEYS, snmpBrowse } from './checkers/snmp.js';
+import { isOid } from './snmp.js';
+
+// A monitor's config without the keys that only change how its data is
+// shown, to tell whether what it checks has changed.
+const checkedConfig = (config) => JSON.stringify(Object.fromEntries(Object.entries(config ?? {}).filter(([k]) => !DISPLAY_KEYS.includes(k))));
+const displayOf = (m) => ({ oids: m.config?.oids ?? '', hide: m.config?.hide ?? [], card: m.config?.card ?? [] });
 import fs from 'node:fs';
 
 export { HttpError };
@@ -147,6 +154,8 @@ export function createApi({ store, engine, icons }) {
     const oldChildren = engine.graph.childrenOf(existing.id);
     store.tx(() => {
       store.updateMonitor(existing.id, data);
+      // Collected data describes the old target; the next check refills it.
+      if (existing.type !== data.type || checkedConfig(existing.config) !== checkedConfig(data.config)) store.clearMonitorData(existing.id);
       applyEdges(existing.id, parentIds, childIds);
       applyMonitorTags(existing.id, tagIds, body.tagsDownstream);
       const notif = idList(body.notificationIds);
@@ -253,6 +262,38 @@ export function createApi({ store, engine, icons }) {
   });
 
   route('GET', '/api/monitors/:id/events', ({ params }) => store.importantHeartbeats(monitorOr404(params.id).id, 50));
+
+  // The latest data the monitor's checks collected (SNMP): { at, data,
+  // display }, at and data null before the first. `display` holds the
+  // settings for how it is shown (extra OIDs, hidden items, the card).
+  route('GET', '/api/monitors/:id/data', ({ params }) => {
+    const m = monitorOr404(params.id);
+    return { at: null, data: null, ...store.getMonitorData(m.id), display: displayOf(m) };
+  });
+
+  // Change how an SNMP monitor's data is shown: any of { oids, hide, card }.
+  // The monitor is checked again so its card text follows.
+  route('PUT', '/api/monitors/:id/snmp-display', ({ params, body }) => {
+    const m = monitorOr404(params.id);
+    if (m.type !== 'snmp') throw new HttpError(400, 'Not an SNMP monitor');
+    const config = { ...m.config };
+    for (const key of DISPLAY_KEYS) if (body?.[key] !== undefined) config[key] = body[key];
+    store.updateMonitor(m.id, normalizeMonitor({ config }, m));
+    engine.reload([m.id]);
+    return displayOf(store.getMonitor(m.id));
+  });
+
+  // A page of everything the device reports, for the "All data" view.
+  route('GET', '/api/monitors/:id/snmp/walk', async ({ params, query }) => {
+    const m = monitorOr404(params.id);
+    if (m.type !== 'snmp') throw new HttpError(400, 'Not an SNMP monitor');
+    const start = query.start && isOid(query.start) ? query.start : undefined;
+    try {
+      return await snmpBrowse(m, { start, limit: int(query.limit, 2000, 50, 10000) });
+    } catch (err) {
+      throw new HttpError(502, err.message);
+    }
+  });
 
   route('GET', '/api/monitors/:id/uptime', ({ params }) => {
     const m = monitorOr404(params.id);

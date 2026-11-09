@@ -68,6 +68,8 @@ test('an export imports into a new install as the same monitors', () => {
   const api2 = add(src, 'API', 'http', { config: { url: 'https://b.example/', method: 'GET', acceptedCodes: '200-299' } });
   const push = add(src, 'Backup', 'push');
   add(src, 'Folder', 'group', { icon: 'emoji:📁' });
+  const sw = add(src, 'Core switch', 'snmp', { config: { host: '192.168.1.2', port: '1161', version: '1', community: 'not-public', oids: 'Temp = 1.3.6.1.4.1.9.1.0\nFan = 1.3.6.1.4.1.9.2.0', hide: ['if:Gi1/0/48', 'section:resources'], card: ['cpu', 'if:Gi1/0/1'] } });
+  src.addEdge(router, sw);
   src.addEdge(wan, router);
   src.addEdge(wan, site);
   src.addEdge(router, site);
@@ -86,7 +88,7 @@ test('an export imports into a new install as the same monitors', () => {
   const dst = freshStore();
   const res = importCsv(dst, csv);
   assert.deepEqual(res.errors, []);
-  assert.equal(res.created, 7);
+  assert.equal(res.created, 8);
   for (const u of res.uploads) dst.setIcon(u.id, { source: 'upload', ...u.img, updatedAt: 1, checkedAt: 1 });
   assert.equal(res.tagsCreated, 2);
   assert.deepEqual(snapshot(dst), snapshot(src));
@@ -172,7 +174,7 @@ test('the example imports cleanly and the template is just the header', () => {
   const store = freshStore();
   const res = importCsv(store, CSV_EXAMPLE);
   assert.deepEqual(res.errors, []);
-  assert.equal(res.created, 9);
+  assert.equal(res.created, 10);
   assert.equal(parseCsv(csvTemplate()).length, 1);
   assert.match(importCsv(store, csvTemplate()).errors[0].message, /only the header/);
 });

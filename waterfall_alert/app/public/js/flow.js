@@ -366,18 +366,20 @@ const truncate = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const iconKey = (i) => (i ? `${i.kind}:${i.src ?? i.name ?? i.value}` : '');
 
 let measureCtx;
-function textWidth(s) {
+function textWidth(s, font = TAG_FONT) {
   measureCtx ??= document.createElement('canvas').getContext('2d');
-  measureCtx.font = TAG_FONT;
+  measureCtx.font = font;
   return measureCtx.measureText(s).width;
 }
 
-function fitText(s, width) {
-  if (textWidth(s) <= width) return s;
+function fitText(s, width, font = TAG_FONT) {
+  if (textWidth(s, font) <= width) return s;
   let n = s.length;
-  while (n > 1 && textWidth(`${s.slice(0, n)}…`) > width) n--;
+  while (n > 1 && textWidth(`${s.slice(0, n)}…`, font) > width) n--;
   return `${s.slice(0, n)}…`;
 }
+
+const SUB_FONT = '10.5px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
 
 // A row of tag pills along the bottom of a node; whatever doesn't fit
 // becomes "+N" (the node's tooltip lists every tag).
@@ -414,6 +416,8 @@ function subline(m) {
   if (m.status === 'down') return truncate(m.msg || 'Down', 22);
   if (m.status === 'paused') return 'Paused';
   if (m.type === 'minecraft' && /players/.test(m.msg)) return `${m.msg.split(' · ')[0]} · ${fmtMs(m.ping)}`;
+  // SNMP: the values picked for the card (the check's message)
+  if (m.type === 'snmp' && m.msg && m.msg !== 'SNMP OK') return fitText(m.msg, NODE_W - TEXT_X - ((m.allParents ?? m.parents).length > 1 ? 34 : 12), SUB_FONT);
   return `${TYPE_LABEL[m.type]} · ${fmtMs(m.ping)}`;
 }
 

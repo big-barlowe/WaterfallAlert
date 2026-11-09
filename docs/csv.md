@@ -94,7 +94,7 @@ These columns apply to every monitor type. The same reference, built from the im
 |---|---|---|---|
 | `key` | text | the name | See [above](#the-hierarchy-key-and-parents). |
 | `name` | text | | **Required.** Rows are matched to existing monitors by name in update and skip mode. |
-| `type` | `group`, `http`, `tcp`, `ping`, `dns`, `ha_entity`, `minecraft`, `push` | | Required for new monitors. In update mode, a blank or missing `type` keeps the current one. |
+| `type` | `group`, `http`, `tcp`, `ping`, `dns`, `ha_entity`, `minecraft`, `snmp`, `push` | | Required for new monitors. In update mode, a blank or missing `type` keeps the current one. |
 | `parents` | list | none | Keys or names, separated by `\|`. |
 | `parent_mode` | `all`, `any` | `all` | `all`: blocked when any parent is down. `any`: blocked only when every parent is down (redundant paths). |
 | `active` | true/false | `true` | `false` = paused. |
@@ -191,6 +191,18 @@ The remaining columns are the settings of particular monitor types. A filled-in 
 |---|---|
 | `host` | **Required.** The address you type into the game. |
 | `port` | Blank = follow the `_minecraft._tcp` SRV record, or 25565 without one. A port skips the SRV lookup, as it does in the game. |
+
+### `snmp`
+
+| Column | Notes |
+|---|---|
+| `host` | **Required.** Host name or IP address of the device. |
+| `port` | Blank = 161. |
+| `snmp_version` | `2c` (default) or `1`. |
+| `community` | The read-only community. Blank = `public`. Exported as plain text, so treat an export with SNMP monitors like a password. |
+| `snmp_oids` | Extra values to read and show, as `Label = OID`, separated by `;` or new lines, e.g. `Temperature = 1.3.6.1.4.1.9.9.13.1.3.1.3.1; Fan = 1.3.6.1.4.1.9.9.13.1.4.1.3.1`. |
+| `snmp_hide` | What **Customize** left off the monitor's page, separated by `\|`: `fact:contact`, `fact:objectId` (also `name`, `location`, `uptime`, `descr`), `if:<interface name>`, `res:cpu`, `res:<memory or disk name>`, `section:interfaces`, `section:resources`, `section:values`. |
+| `snmp_card` | Up to two values for the card in the Falls, separated by `\|`: `name`, `location`, `uptime`, `ifs` (links up), `cpu`, `memory`, `disk:<name>`, `if:<interface name>` (its traffic), `value:<OID>` (one of `snmp_oids`). Blank = name and links up. |
 
 ### `push`
 

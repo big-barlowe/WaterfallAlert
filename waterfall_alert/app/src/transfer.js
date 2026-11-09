@@ -38,14 +38,19 @@ export const CSV_COLUMNS = [
   { name: 'ignore_tls', config: 'ignoreTls', types: ['http'], kind: 'bool', help: 'true = ignore certificate errors.' },
   { name: 'headers', config: 'headers', types: ['http'], help: 'Request headers as JSON, e.g. {"Authorization": "Bearer …"}.' },
   { name: 'body', config: 'body', types: ['http'], help: 'Request body.' },
-  { name: 'host', config: 'host', types: ['tcp', 'ping', 'minecraft'], required: ['tcp', 'ping', 'minecraft'], help: 'Host name or IP address. For Minecraft, the address you type into the game.' },
-  { name: 'port', config: 'port', types: ['tcp', 'minecraft'], required: ['tcp'], help: 'For Minecraft, blank = follow the SRV record (or 25565).' },
+  { name: 'host', config: 'host', types: ['tcp', 'ping', 'minecraft', 'snmp'], required: ['tcp', 'ping', 'minecraft', 'snmp'], help: 'Host name or IP address. For Minecraft, the address you type into the game.' },
+  { name: 'port', config: 'port', types: ['tcp', 'minecraft', 'snmp'], required: ['tcp'], help: 'For Minecraft, blank = follow the SRV record (or 25565). For SNMP, blank = 161.' },
   { name: 'hostname', config: 'hostname', types: ['dns'], required: ['dns'], help: 'The name to resolve.' },
   { name: 'record_type', config: 'recordType', types: ['dns'], values: ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS', 'SRV'], def: 'A' },
   { name: 'server', config: 'server', types: ['dns'], help: 'Resolver to ask, e.g. 1.1.1.1. Blank = the system resolver.' },
   { name: 'expected', config: 'expected', types: ['dns'], help: 'Down unless an answer contains this. SRV answers read as target:port.' },
   { name: 'entity_id', config: 'entityId', types: ['ha_entity'], required: ['ha_entity'], help: 'e.g. binary_sensor.nas_online.' },
   { name: 'expected_state', config: 'expectedState', types: ['ha_entity'], help: 'Comma separated. Blank = up unless unavailable or unknown.' },
+  { name: 'snmp_version', config: 'version', types: ['snmp'], values: ['2c', '1'], def: '2c' },
+  { name: 'community', config: 'community', types: ['snmp'], help: 'SNMP read community. Blank = public. Exported as plain text.' },
+  { name: 'snmp_oids', config: 'oids', types: ['snmp'], help: 'Extra values to read, as Label = OID, separated by ; or new lines.' },
+  { name: 'snmp_hide', config: 'hide', types: ['snmp'], kind: 'list', help: 'Items left off the monitor’s page, separated by |, e.g. if:Gi1/0/48 | section:resources.' },
+  { name: 'snmp_card', config: 'card', types: ['snmp'], kind: 'list', help: 'Up to 2 values the card in the Falls shows, separated by |, e.g. cpu | if:eth0. Blank = name and links up.' },
   { name: 'push_token', types: ['push'], help: 'The secret in the push URL. Keep it to keep the URL the same on another install; blank = generate a new one.' },
 ];
 const COLUMN = new Map(CSV_COLUMNS.map((c) => [c.name, c]));
@@ -62,6 +67,7 @@ const EXAMPLE_ROWS = [
   { name: 'Website DNS', type: 'dns', parents: 'WAN', hostname: 'example.com', record_type: 'A' },
   { name: 'Website', type: 'http', parents: 'WAN | Website DNS', parent_mode: 'all', url: 'https://example.com/health', accepted_codes: '200-299', keyword: 'ok' },
   { name: 'Minecraft', type: 'minecraft', parents: 'WAN', host: 'mc.example.net', icon: '' },
+  { name: 'Core switch', type: 'snmp', parents: 'Router', host: '192.168.1.2', snmp_version: '2c', community: 'public', snmp_oids: 'Temperature = 1.3.6.1.4.1.9.9.13.1.3.1.3.1', icon: 'builtin:switch' },
 ];
 export const CSV_EXAMPLE = toCsv([CSV_COLUMNS.map((c) => c.name), ...EXAMPLE_ROWS.map((r) => CSV_COLUMNS.map((c) => r[c.name] ?? ''))]);
 
@@ -114,6 +120,7 @@ export function exportCsv(store) {
     if (c.field) return c.kind === 'bool' ? String(Boolean(m[c.field])) : m[c.field];
     if (!c.types.includes(m.type)) return '';
     const v = m.config[c.config];
+    if (c.kind === 'list') return Array.isArray(v) ? v.join(' | ') : '';
     return c.kind === 'bool' ? String(Boolean(v)) : v ?? '';
   };
   return toCsv([CSV_COLUMNS.map((c) => c.name), ...order.map((m) => CSV_COLUMNS.map((c) => cell(m, c)))]);
@@ -246,6 +253,7 @@ export function importCsv(store, text, { mode = 'add', dryRun = false } = {}) {
             continue;
           }
           if (raw === '') delete config[c.config];
+          else if (c.kind === 'list') config[c.config] = raw.split('|').map((x) => x.trim()).filter(Boolean);
           else config[c.config] = c.kind === 'bool' ? parseBool(raw, c.name) : c.values ? pickValue(c, raw) : raw;
         }
         for (const c of CSV_COLUMNS) {

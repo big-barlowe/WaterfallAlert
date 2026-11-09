@@ -29,7 +29,7 @@ Other affected monitors (3):
 - **Edit mode.** Drag a monitor onto another to nest it. Hold <kbd>Alt</kbd>/<kbd>⌥</kbd> to add an extra parent instead of moving it. Shift-click several to move them together. On touch screens, use the move (⇅) button. Loops are rejected.
 - **Recovery cascades downward.** When a monitor recovers you get a *Resolved* message, and the level beneath it is re-checked immediately, one level at a time.
 - **Heartbeat history** like Uptime Kuma: heartbeat bars, a response-time chart (1h–30d), 24h/30d uptime, and an event log. Retention is configurable.
-- **Monitor types:** HTTP(S) (status codes, keyword), TCP port, ping, DNS (including SRV), Home Assistant entity state, Minecraft Java server (follows SRV records, shows players), push (heartbeat URL), and group (a plain folder).
+- **Monitor types:** HTTP(S) (status codes, keyword), TCP port, ping, DNS (including SRV), Home Assistant entity state, Minecraft Java server (follows SRV records, shows players), SNMP v1/v2c (interfaces with traffic rates, CPU, memory, disks and custom OIDs, shown when you select the monitor), push (heartbeat URL), and group (a plain folder).
 - **Notifications:** Home Assistant notify services, ntfy, Discord, Slack, Telegram, Pushover, Gotify, generic JSON webhook, email (SMTP).
 - **Water-themed UI.** A live "falls" diagram where healthy streams flow with a blue glow, streams below a failure run dry, and blocked branches go still. Drag to move around it and zoom like a map, or pop it out to fill the window. Click a monitor to trace just its upstream and downstream, and expand it for a details panel.
 - **Icons.** HTTP monitors show their site's favicon automatically. You can also choose a built-in icon, an emoji, an image URL or upload your own.

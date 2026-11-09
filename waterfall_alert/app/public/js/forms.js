@@ -33,6 +33,13 @@ const TYPE_FIELDS = {
     { key: 'host', label: 'Server address', placeholder: 'mc.example.net', required: true, help: 'What you type into Minecraft. Its SRV record is followed automatically.' },
     { key: 'port', label: 'Port (optional)', type: 'number', placeholder: '25565', help: 'Leave blank to use the SRV record (or 25565 without one). Setting a port skips the SRV lookup, as it does in the game.' },
   ],
+  snmp: [
+    { key: 'host', label: 'Host', placeholder: '192.168.1.2', required: true },
+    { key: 'port', label: 'Port (optional)', type: 'number', placeholder: '161' },
+    { key: 'version', label: 'Version', type: 'select', options: ['2c', '1'], def: '2c', help: 'v2c is what almost everything speaks. v3 (user name and password) is not supported yet.' },
+    { key: 'community', label: 'Community', placeholder: 'public', secret: true, help: 'The read-only community set on the device. Blank = public.' },
+    { key: 'oids', label: 'Extra values (optional)', type: 'textarea', placeholder: 'Temperature = 1.3.6.1.4.1.…', help: 'One per line: a label, =, and an OID. Shown on the monitor’s page.' },
+  ],
   push: [],
 };
 
@@ -45,6 +52,7 @@ const TYPE_HELP = {
   ha_entity: 'Watches a Home Assistant entity state.',
   minecraft: 'Asks a Minecraft: Java Edition server for its status, the same way the multiplayer server list does, so it is only up when the server actually answers. Shows players online and the version. Bedrock servers are not supported.',
   push: 'Passive: something else calls the push URL. Down if no push arrives within the interval.',
+  snmp: 'Asks a device for its SNMP system information (v1 or v2c). Up when it answers. Each check also collects what the device advertises: its interfaces with traffic rates, and CPU, memory and disks where it offers them. Click the monitor to see them.',
 };
 
 function field(f, value, onChange) {

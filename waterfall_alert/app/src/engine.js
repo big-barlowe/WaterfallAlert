@@ -18,6 +18,7 @@ export function describeTarget(m) {
     case 'dns': return c.hostname ? `${c.hostname} (${c.recordType || 'A'})` : '';
     case 'ha_entity': return c.entityId || '';
     case 'minecraft': return c.host ? `${c.host}${c.port ? `:${c.port}` : ''}` : '';
+    case 'snmp': return c.host ? `${c.host}${c.port && Number(c.port) !== 161 ? `:${c.port}` : ''}` : '';
     case 'push': return 'push';
     default: return '';
   }
@@ -246,6 +247,9 @@ export class Engine {
       }
       const result = await this.#runChecker(m);
       if (!this.monitors.has(id) || !this.monitors.get(id).active) return;
+      // What the check collected (SNMP), kept as the monitor's latest snapshot;
+      // a failed check leaves the last one in place.
+      if (result.data) this.store.setMonitorData(id, result.data, this.now());
       // A parent may have gone down while we were waiting on the network.
       if (!this.gateOpen(id)) {
         this.#setBlocked(id);
@@ -273,7 +277,8 @@ export class Engine {
       timer = setTimeout(() => resolve({ ok: false, msg: `Timed out after ${m.timeout}s` }), (m.timeout + 5) * 1000);
     });
     try {
-      return await Promise.race([Promise.resolve().then(() => fn(m)), guard]);
+      const previous = this.store.getMonitorData?.(m.id)?.data ?? null;
+      return await Promise.race([Promise.resolve().then(() => fn(m, { previous })), guard]);
     } catch (err) {
       return { ok: false, msg: err.message || String(err) };
     } finally {

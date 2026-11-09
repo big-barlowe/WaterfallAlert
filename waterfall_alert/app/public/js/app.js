@@ -5,6 +5,7 @@ import { heartbeatBar, responseChart } from './chart.js';
 import { renderMonitorForm, renderNotificationForm, iconChooser } from './forms.js';
 import { tagPill, colorPicker, newTagDialog, matchIcon, TAG_MATCH, tagIconView } from './tags.js';
 import { parseTagExpr, exprName } from './filter.js';
+import { snmpSnapshot, snmpSummary, snmpSections, renderSnmpBrowser } from './snmp.js';
 
 const POLL_MS = 3000;
 const $ = (sel) => document.querySelector(sel);
@@ -33,6 +34,8 @@ const ui = {
   popout: null,       // 'side' or 'falls': popped out to fill the window
   fallsHeight: storage('fallsHeight', null), // dragged height of the Falls map; null = automatic
   fallsLayout: storage('fallsLayout', 'tree'), // 'tree' or 'rings'
+  snmpAllIfs: false,               // SNMP interfaces: list disabled ones and loopbacks too
+  snmpEdit: false,                 // SNMP sections in customize mode (hide items, pick the card)
 };
 
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true });
@@ -181,6 +184,8 @@ function onState() {
   const r = ui.route;
   if (r?.name === 'dashboard') renderDashboard(true);
   if (r?.name === 'monitor') renderDetail(r.id, true);
+  // opened by a link before the monitors had loaded
+  if (r?.name === 'snmp' && !$('#main .snmp-browser') && state.byId.has(r.id)) renderSnmpBrowser($('#main'), state.byId.get(r.id));
 }
 
 // ---- header summary -------------------------------------------------------
@@ -1009,6 +1014,7 @@ function renderInfo() {
       m.type === 'group' ? null : h('span', { class: 'muted small' }, `checked ${fmtAgo(m.lastCheck)} · every ${m.interval}s`)),
     m.msg ? h('p', { class: 'info-msg' }, m.msg) : null,
     m.description ? h('p', { class: 'muted small' }, m.description) : null,
+    m.type === 'snmp' ? snmpSummary(m, snmpSnapshot(m.id, m.lastCheck, () => ui.info === m.id && renderInfo())) : null,
     h('div', { class: 'info-tags' },
       tagsOf(m).map((t) => tagPill(t)),
       h('button', {
@@ -1129,6 +1135,21 @@ async function renderDetail(id, isUpdate = false) {
         h('span', { class: 'muted small' }, `checked ${fmtAgo(m.lastCheck)} · every ${m.interval}s`)),
       heartbeatBar(m.beats, 40),
       m.msg ? h('p', { class: 'muted small last-msg' }, m.msg) : null),
+
+    m.type === 'snmp' ? snmpSections(m, snmpSnapshot(m.id, m.lastCheck, () => ui.route?.name === 'monitor' && ui.route.id === id && renderDetail(id, true)), {
+      showAll: ui.snmpAllIfs,
+      onToggleAll: () => {
+        ui.snmpAllIfs = !ui.snmpAllIfs;
+        renderDetail(id, true);
+      },
+      editing: ui.snmpEdit,
+      onToggleEdit: () => {
+        ui.snmpEdit = !ui.snmpEdit;
+        renderDetail(id, true);
+      },
+      rerender: () => ui.route?.name === 'monitor' && ui.route.id === id && renderDetail(id, true),
+      browseHref: `#/monitor/${id}/snmp`,
+    }) : null,
 
     m.type === 'group' ? null : h('section', { class: 'card' },
       h('div', { class: 'card-head' },
@@ -1497,6 +1518,7 @@ function parseRoute() {
   const params = new URLSearchParams(qs);
   const parts = path.split('/').filter(Boolean);
   if (parts[0] === 'monitor' && parts[2] === 'edit') return { name: 'edit', id: Number(parts[1]) };
+  if (parts[0] === 'monitor' && parts[2] === 'snmp') return { name: 'snmp', id: Number(parts[1]) };
   if (parts[0] === 'monitor') return { name: 'monitor', id: Number(parts[1]) };
   if (parts[0] === 'add') return { name: 'add', parent: params.get('parent') ? Number(params.get('parent')) : null };
   if (parts[0] === 'alerts') return { name: 'alerts' };
@@ -1513,7 +1535,7 @@ async function route() {
   if (ui.exprOpen === 'falls') ui.exprOpen = false;
   ui.route = parseRoute();
   const r = ui.route;
-  document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.route === (r.name === 'monitor' || r.name === 'edit' || r.name === 'add' ? 'dashboard' : r.name)));
+  document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.route === (['monitor', 'edit', 'add', 'snmp'].includes(r.name) ? 'dashboard' : r.name)));
   document.body.classList.toggle('show-tree', r.name === 'dashboard');
   renderTree();
   window.scrollTo({ top: 0 });
@@ -1524,6 +1546,7 @@ async function route() {
   try {
     if (r.name === 'dashboard') await renderDashboard();
     else if (r.name === 'monitor') await renderDetail(r.id);
+    else if (r.name === 'snmp') await renderSnmpBrowser($('#main'), state.byId.get(r.id));
     else if (r.name === 'edit') await renderMonitorForm($('#main'), { state, id: r.id, navigate: go });
     else if (r.name === 'add') await renderMonitorForm($('#main'), { state, presetParent: r.parent, navigate: go });
     else if (r.name === 'alerts') await renderAlerts();

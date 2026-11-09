@@ -113,6 +113,14 @@ const MIGRATIONS = [
   ALTER TABLE tags ADD COLUMN icon_data BLOB;
   ALTER TABLE tags ADD COLUMN icon_updated_at INTEGER NOT NULL DEFAULT 0;
   `,
+  // v5: the latest data a check collected (SNMP), as JSON.
+  `
+  CREATE TABLE monitor_data (
+    monitor_id INTEGER PRIMARY KEY REFERENCES monitors(id) ON DELETE CASCADE,
+    updated_at INTEGER NOT NULL,
+    data       TEXT NOT NULL
+  );
+  `,
 ];
 
 const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
@@ -267,6 +275,23 @@ export class Store {
 
   deleteMonitor(id) {
     this.q('DELETE FROM monitors WHERE id = ?').run(id);
+  }
+
+  // ---- collected data (SNMP) --------------------------------------------
+
+  setMonitorData(id, data, now) {
+    this.q('INSERT INTO monitor_data (monitor_id, updated_at, data) VALUES (?, ?, ?) ON CONFLICT(monitor_id) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data')
+      .run(id, now, JSON.stringify(data));
+  }
+
+  // { at, data } or null.
+  getMonitorData(id) {
+    const row = this.q('SELECT updated_at, data FROM monitor_data WHERE monitor_id = ?').get(id);
+    return row ? { at: row.updated_at, data: JSON.parse(row.data) } : null;
+  }
+
+  clearMonitorData(id) {
+    this.q('DELETE FROM monitor_data WHERE monitor_id = ?').run(id);
   }
 
   // ---- hierarchy edges ----------------------------------------------------

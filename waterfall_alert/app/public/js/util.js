@@ -73,6 +73,7 @@ export const TYPE_LABEL = {
   dns: 'DNS',
   ha_entity: 'HA entity',
   minecraft: 'Minecraft',
+  snmp: 'SNMP',
   push: 'Push',
 };
 
