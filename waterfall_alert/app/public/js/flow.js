@@ -17,6 +17,12 @@ const ZOOM = { min: 0.2, max: 2.5, step: 1.25 };
 const FIT_MIN = 0.6; // fitting never shrinks below this; zoom out for the overview
 const VIEW_MIN_H = 320;
 const MAP_H = { min: 200, max: 4000 }; // dragged heights
+// Zoomed out below `details`, the small text, tags and sparkles are left out
+// (names stay). With more than `animate` streams on screen the water stops
+// moving: hundreds of animated streams cost more than they show.
+const LOD = { details: 0.3, animate: 300 };
+// Downstream of a traced monitor: each step away is this much smaller.
+const SHRINK = { step: 0.9, min: 0.65 };
 const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -90,97 +96,169 @@ function structure(monitors) {
     place(r);
   });
 
-  return { level, roots, slot, slots: Math.max(1, next) };
+  return { level, roots, kids, byName, slot, slots: Math.max(1, next) };
 }
 
+// Both layouts take `scaleOf(id)`, a monitor's size relative to a full card
+// (smaller downstream of a traced monitor), and return each card's box
+// `{x, y, w, h, s}`.
+
 // The "waterfall": roots at the top, every child strictly below all of its
-// parents, the source above the roots.
-function treeLayout(monitors, nodeH) {
+// parents, the source above the roots. A smaller card sits in the middle of
+// its full-size cell.
+function treeLayout(monitors, nodeH, scaleOf = () => 1) {
   const { level, roots, slot, slots } = structure(monitors);
   const pos = new Map();
   for (const m of monitors) {
-    pos.set(m.id, { x: PAD + slot.get(m.id) * SLOT_W, y: PAD + SOURCE_H + level.get(m.id) * LEVEL_H });
+    const s = scaleOf(m.id);
+    const w = NODE_W * s;
+    const h = nodeH * s;
+    pos.set(m.id, { x: PAD + slot.get(m.id) * SLOT_W + (NODE_W - w) / 2, y: PAD + SOURCE_H + level.get(m.id) * LEVEL_H + (nodeH - h) / 2, w, h, s });
   }
   const maxLevel = Math.max(0, ...level.values());
-  const xs = roots.map((r) => pos.get(r).x);
-  const source = { x: (Math.min(...xs) + Math.max(...xs)) / 2 + NODE_W / 2, y: PAD + 14 };
+  const xs = roots.map((r) => pos.get(r).x + pos.get(r).w / 2);
+  const source = { x: (Math.min(...xs) + Math.max(...xs)) / 2, y: PAD + 14 };
   return {
     pos,
     source,
     width: PAD * 2 + slots * SLOT_W - (SLOT_W - NODE_W),
     height: PAD * 2 + SOURCE_H + maxLevel * LEVEL_H + nodeH,
     stream: (from, to) => (from
-      ? curve(from.x + NODE_W / 2, from.y + nodeH, to.x + NODE_W / 2, to.y)
-      : curve(source.x, source.y + 10, to.x + NODE_W / 2, to.y)),
+      ? curve(from.x + from.w / 2, from.y + from.h, to.x + to.w / 2, to.y)
+      : curve(source.x, source.y + 10, to.x + to.w / 2, to.y)),
   };
 }
 
-// Rings: the source (or a lone root) in the middle and each level on a ring
-// around it, so several sites spread around a circle instead of along one
-// very wide row (or a fan, while there are too few to fill a circle). Every subtree keeps its own wedge, in the tree's order. A
-// ring is pushed out only as far as it takes for its cards to clear each
-// other and everything inside it.
-const RING = { min: NODE_H + 44, step: 12, margin: 12, perSlot: (40 * Math.PI) / 180 };
+// Rings: the first monitor that branches (the core switch, say) in the
+// middle, with the chain above it (WAN, firewall, ...) as a trunk feeding in
+// from the top, and everything else spread around it. Each subtree keeps its
+// own wedge, in the tree's order. A monitor's devices with nothing below them
+// are stacked a few rows deep instead of along one long arc. Distances are
+// flexible: each monitor sits just beyond its parent, pushed out only as far
+// as it takes to clear what is already placed, so the shape stays compact
+// rather than perfectly round. A small diagram opens downward as a fan.
+const RING = { gap: NODE_H + 36, margin: 10, perSlot: (40 * Math.PI) / 180, top: (44 * Math.PI) / 180 };
 
-function ringLayout(monitors, nodeH) {
-  const { level, roots, slot, slots } = structure(monitors);
-  const hub = roots.length === 1 ? roots[0] : null;
-  const ring = (id) => (id === hub ? 0 : level.get(id) + (hub == null ? 1 : 0));
-  // A small diagram opens downward as a fan (a trace, say); a big one goes
-  // all the way round.
-  const span = Math.min(2 * Math.PI, slots * RING.perSlot);
-  const angle = (id) => Math.PI / 2 + span * ((slot.get(id) + 0.5) / slots - 0.5);
-  const rings = [];
-  for (const m of monitors) (rings[ring(m.id)] ??= []).push(m.id);
+function ringLayout(monitors, nodeH, scaleOf = () => 1) {
+  const { level, roots, kids, byName } = structure(monitors);
 
-  const W2 = NODE_W / 2 + RING.margin;
-  const H2 = nodeH / 2 + RING.margin;
-  const polar = new Map();
-  const placed = []; // centres of the cards on inner rings
-  const clash = (a, b) => Math.abs(a.x - b.x) < W2 * 2 && Math.abs(a.y - b.y) < H2 * 2;
-  let r = 0;
-  rings.forEach((ids = [], i) => {
-    if (!ids.length) return;
-    if (i > 0) {
-      r += RING.min;
-      const at = (radius) => ids.map((id) => ({ x: radius * Math.cos(angle(id)), y: radius * Math.sin(angle(id)) }));
-      for (let guard = 0; guard < 400; guard++) {
-        const cs = at(r);
-        const bad = cs.some((c, j) => placed.some((p) => clash(c, p)) || cs.some((d, k) => k > j && clash(c, d)));
-        if (!bad) break;
-        r += RING.step;
-      }
+  // The trunk: from a lone root down to where it first branches.
+  const trunk = [];
+  let hub = null;
+  if (roots.length === 1) {
+    hub = roots[0];
+    while (kids.get(hub).length === 1) {
+      trunk.push(hub);
+      hub = kids.get(hub)[0];
     }
-    for (const id of ids) {
-      const a = i ? angle(id) : 0;
-      const radius = i ? r : 0;
-      polar.set(id, { r: radius, a });
-      placed.push({ x: radius * Math.cos(a), y: radius * Math.sin(a) });
+  }
+
+  // Slots (angles to be): leaves stacked in staggered rows, a parent in the
+  // middle of its children, its stacked devices between its branches.
+  const slot = new Map();
+  const row = new Map();
+  let next = 0;
+  const place = (id) => {
+    const k = kids.get(id);
+    if (!k.length) {
+      slot.set(id, next++);
+      return;
     }
+    const leaves = k.filter((c) => !kids.get(c).length);
+    const branches = k.filter((c) => kids.get(c).length);
+    const half = Math.ceil(branches.length / 2);
+    branches.slice(0, half).forEach(place);
+    if (leaves.length) {
+      const rows = leaves.length < 4 ? 1 : Math.min(4, Math.ceil(Math.sqrt(leaves.length / 2)));
+      const cols = Math.ceil(leaves.length / rows);
+      const base = next;
+      leaves.forEach((c, j) => {
+        const r = Math.floor(j / cols);
+        slot.set(c, base + (j % cols) + (r % 2 ? 0.5 : 0));
+        row.set(c, r);
+      });
+      next += cols + (rows > 1 ? 0.5 : 0);
+    }
+    branches.slice(half).forEach(place);
+    const ss = k.map((c) => slot.get(c));
+    slot.set(id, (Math.min(...ss) + Math.max(...ss)) / 2);
+  };
+  const tops = hub != null ? kids.get(hub) : roots;
+  tops.forEach((r, i) => {
+    if (i && roots.length > 1) next += 0.25;
+    place(r);
   });
+  const slots = Math.max(1, next);
+  // Something sits above the middle (the trunk, or the source): keep clear
+  // of it at the top.
+  const span = Math.min(2 * Math.PI - (hub != null ? RING.top : 0), slots * RING.perSlot);
+  const angle = (id) => Math.PI / 2 + span * ((slot.get(id) + 0.5) / slots - 0.5);
 
-  // Centres, then shifted so everything (and the source) sits inside the
-  // padding.
-  const centre = new Map([...polar].map(([id, p]) => [id, { x: p.r * Math.cos(p.a), y: p.r * Math.sin(p.a) }]));
-  const src = hub != null ? { x: 0, y: -nodeH / 2 - 40 } : { x: 0, y: 0 };
+  // Place: the middle and the trunk first, then outward level by level (and
+  // stacked row by row), the middle of each level before its edges.
+  const M = RING.margin * 2;
+  const size = (id) => ({ w: NODE_W * scaleOf(id), h: nodeH * scaleOf(id) });
+  const centre = new Map(); // centres and sizes
+  const placed = [];
+  const put = (id, c) => {
+    centre.set(id, c);
+    placed.push(c);
+  };
+  const STEP = nodeH + 42;
+  if (hub != null) {
+    put(hub, { x: 0, y: 0, ...size(hub) });
+    trunk.forEach((id, i) => put(id, { x: 0, y: -(trunk.length - i) * STEP, ...size(id) }));
+  } else {
+    placed.push({ x: 0, y: 0, w: NODE_W, h: nodeH }); // the source
+  }
+  const src = hub != null ? { x: 0, y: -trunk.length * STEP - nodeH / 2 - 40 } : { x: 0, y: 0 };
+  const radius = new Map(hub != null ? [[hub, 0]] : []);
+  const parentOf = new Map();
+  for (const [id, k] of kids) for (const c of k) parentOf.set(c, id);
+  const mid = (slots - 1) / 2;
+  const order = monitors.map((m) => m.id).filter((id) => !centre.has(id))
+    .sort((a, b) => level.get(a) + (row.get(a) ?? 0) - level.get(b) - (row.get(b) ?? 0) || Math.abs(slot.get(a) - mid) - Math.abs(slot.get(b) - mid) || byName(a, b));
+  for (const id of order) {
+    const u = { x: Math.cos(angle(id)), y: Math.sin(angle(id)) };
+    const { w, h } = size(id);
+    let r = (radius.get(parentOf.get(id)) ?? 0) + RING.gap * scaleOf(id);
+    const DX = (q) => (w + q.w) / 2 + M;
+    const DY = (q) => (h + q.h) / 2 + M;
+    for (let guard = 0; guard < 200; guard++) {
+      const p = { x: r * u.x, y: r * u.y };
+      const hits = placed.filter((q) => Math.abs(p.x - q.x) < DX(q) && Math.abs(p.y - q.y) < DY(q));
+      if (!hits.length) break;
+      // jump straight to where the ray leaves the furthest of them
+      r = Math.max(...hits.map((q) => {
+        const out = [];
+        if (Math.abs(u.x) > 1e-6) out.push((q.x + DX(q)) / u.x, (q.x - DX(q)) / u.x);
+        if (Math.abs(u.y) > 1e-6) out.push((q.y + DY(q)) / u.y, (q.y - DY(q)) / u.y);
+        return Math.min(...out.filter((t) => t > r));
+      })) + 0.5;
+    }
+    radius.set(id, r);
+    put(id, { x: r * u.x, y: r * u.y, w, h });
+  }
+
+  // Shifted so everything (and the source) sits inside the padding.
   const cs = [...centre.values()];
-  const minX = Math.min(src.x - 12, ...cs.map((c) => c.x - NODE_W / 2));
-  const minY = Math.min(src.y - 12, ...cs.map((c) => c.y - nodeH / 2));
-  const maxX = Math.max(src.x + 12, ...cs.map((c) => c.x + NODE_W / 2));
-  const maxY = Math.max(src.y + 12, ...cs.map((c) => c.y + nodeH / 2));
+  const minX = Math.min(src.x - 12, ...cs.map((c) => c.x - c.w / 2));
+  const minY = Math.min(src.y - 12, ...cs.map((c) => c.y - c.h / 2));
+  const maxX = Math.max(src.x + 12, ...cs.map((c) => c.x + c.w / 2));
+  const maxY = Math.max(src.y + 12, ...cs.map((c) => c.y + c.h / 2));
   const dx = PAD - minX;
   const dy = PAD - minY;
-  const pos = new Map([...centre].map(([id, c]) => [id, { x: c.x - NODE_W / 2 + dx, y: c.y - nodeH / 2 + dy }]));
+  const pos = new Map([...centre].map(([id, c]) => [id, { x: c.x - c.w / 2 + dx, y: c.y - c.h / 2 + dy, w: c.w, h: c.h, s: scaleOf(id) }]));
   const source = { x: src.x + dx, y: src.y + dy };
   const middle = { x: dx, y: dy };
-  const box = (p) => p && { x: p.x, y: p.y, w: NODE_W, h: nodeH };
+  const box = (p) => p && { x: p.x, y: p.y, w: p.w, h: p.h };
   return {
     pos,
     source,
-    centre: hub != null ? { x: pos.get(hub).x + NODE_W / 2, y: pos.get(hub).y + nodeH / 2 } : middle,
+    centre: middle,
     width: maxX - minX + PAD * 2,
     height: maxY - minY + PAD * 2,
-    stream: (from, to, seed) => river(middle, from ? { x: from.x + NODE_W / 2, y: from.y + nodeH / 2 } : source, { x: to.x + NODE_W / 2, y: to.y + nodeH / 2 }, box(from), box(to), seed),
+    stream: (from, to, seed) => river(middle, from ? { x: from.x + from.w / 2, y: from.y + from.h / 2 } : source, { x: to.x + to.w / 2, y: to.y + to.h / 2 }, box(from), box(to), seed),
   };
 }
 
@@ -481,10 +559,13 @@ export class FlowView {
 
     this.topology = key;
     const nodeH = monitors.some((m) => m.tagList?.length) ? TAGGED_H : NODE_H;
-    const L = (this.mode === 'rings' ? ringLayout : treeLayout)(monitors, nodeH);
+    // Tracing a monitor, everything downstream of it gets a little smaller
+    // with each step away.
+    const scaleOf = (id) => (rel?.down.has(id) ? Math.max(SHRINK.min, SHRINK.step ** rel.down.get(id)) : 1);
+    const L = (this.mode === 'rings' ? ringLayout : treeLayout)(monitors, nodeH, scaleOf);
     const { pos, width, height } = L;
     const oldBoxes = this.boxes;
-    this.boxes = new Map([...pos].map(([id, p]) => [id, { ...p, w: NODE_W, h: nodeH }]));
+    this.boxes = new Map([...pos].map(([id, p]) => [id, { x: p.x, y: p.y, w: p.w, h: p.h }]));
     const { x: srcX, y: srcY } = L.source;
 
     const edges = svg('g', { class: 'edges' });
@@ -512,7 +593,7 @@ export class FlowView {
     }
 
     for (const m of monitors) {
-      const { x, y } = pos.get(m.id);
+      const { x, y, s: scale } = pos.get(m.id);
       const title = svg('title');
       const sub = svg('text', { class: 'sub', x: TEXT_X, y: 42 });
       const pool = svg('rect', { class: 'pool', width: NODE_W, height: nodeH, rx: 14 });
@@ -558,7 +639,7 @@ export class FlowView {
       const toggle = (e) => e.shiftKey || e.metaKey || e.ctrlKey || this.selectMode;
       const g = svg('g', {
         class: 'node',
-        transform: `translate(${x},${y})`,
+        transform: `translate(${x},${y})${scale !== 1 ? ` scale(${scale})` : ''}`,
         tabindex: 0,
         role: 'button',
         'aria-pressed': String(m.id === focus),
@@ -576,7 +657,7 @@ export class FlowView {
         },
       }, inner);
       nodes.append(g);
-      this.nodeEls.set(m.id, { g, inner, pool, title, sub, role, tags: m.tagList ?? [] });
+      this.nodeEls.set(m.id, { g, inner, pool, title, sub, role, tags: m.tagList ?? [], s: scale });
     }
 
     const source = svg('g', { class: 'source' },
@@ -603,18 +684,21 @@ export class FlowView {
       },
     },
     svg('defs', {},
-      // Streams need a user-space region: a bounding-box one is zero-wide on
-      // a perfectly vertical stream and would clip it away entirely.
-      glowFilter('glow', { filterUnits: 'userSpaceOnUse', x: 0, y: 0, width, height }),
       glowFilter('glow-box', { x: '-50%', y: '-50%', width: '200%', height: '200%' })),
     this.viewEl);
     root.addEventListener('wheel', (e) => this.#wheel(e), { passive: false });
     fill(this.container, root, this.controls, this.hint);
+    // Each stream's extent, so the ones off screen can stop animating.
+    for (const e of this.edgeEls) {
+      const b = e.g.getBBox();
+      e.box = { x: b.x, y: b.y, w: b.width, h: b.height };
+      e.off = false;
+    }
     this.svgEl = root;
     this.gesture = null;
     this.pointers.clear();
 
-    this.content = { width, height, anchor: focus != null ? { x: pos.get(focus).x + NODE_W / 2, y: pos.get(focus).y + nodeH / 2 } : L.centre ?? null };
+    this.content = { width, height, anchor: focus != null ? { x: pos.get(focus).x + pos.get(focus).w / 2, y: pos.get(focus).y + pos.get(focus).h / 2 } : L.centre ?? null };
     const fitKey = JSON.stringify([this.mode, focus, monitors.map((m) => m.id)]);
     const v = this.view;
     const keyChanged = v.key !== fitKey || v.k == null;
@@ -671,6 +755,8 @@ export class FlowView {
   #apply(animate) {
     const v = this.view;
     if (!this.viewEl) return;
+    this.svgEl.classList.toggle('lod-far', v.k < LOD.details);
+    this.#scheduleCull();
     if (!this.expanded) this.container.style.height = `${v.h}px`;
     const glide = animate && !reducedMotion();
     this.viewEl.classList.toggle('glide', glide);
@@ -678,6 +764,38 @@ export class FlowView {
     if (glide) this.glideTimer = setTimeout(() => this.viewEl?.classList.remove('glide'), 320);
     this.viewEl.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.k})`;
     this.zoomLabel.textContent = `${Math.round(v.k * 100)}%`;
+  }
+
+  // Only what is on screen (plus a margin) animates; checked a few times a
+  // second while the view moves.
+  #scheduleCull() {
+    if (this.cullTimer) return;
+    this.cullTimer = setTimeout(() => {
+      this.cullTimer = null;
+      this.#cull();
+    }, 120);
+  }
+
+  #cull() {
+    const v = this.view;
+    if (!this.svgEl?.isConnected || !this.edgeEls) return;
+    const m = 80 / v.k;
+    const x0 = -v.x / v.k - m;
+    const y0 = -v.y / v.k - m;
+    const x1 = x0 + this.container.clientWidth / v.k + 2 * m;
+    const y1 = y0 + v.h / v.k + 2 * m;
+    const out = (b) => b.x > x1 || b.y > y1 || b.x + b.w < x0 || b.y + b.h < y0;
+    let shown = 0;
+    for (const e of this.edgeEls) {
+      const off = !e.box || out(e.box);
+      if (!off) shown++;
+      if (off !== e.off) e.g.classList.toggle('offscreen', (e.off = off));
+    }
+    this.svgEl.classList.toggle('calm', shown > LOD.animate);
+    for (const [id, n] of this.nodeEls) {
+      const off = out(this.boxes.get(id));
+      if (off !== n.off) n.g.classList.toggle('offscreen', (n.off = off));
+    }
   }
 
   // Zoom by `factor` keeping the point (sx, sy) of the diagram where it is.
@@ -881,11 +999,13 @@ export class FlowView {
           { duration: 380, delay: 220, easing: 'ease-out', fill: 'backwards' });
         continue;
       }
+      // in the node's own units, which its scale shrinks too
       const now = n.pool.getBoundingClientRect();
-      const dx = (was.left - now.left) / k;
-      const dy = (was.top - now.top) / k;
-      if (Math.abs(dx) + Math.abs(dy) < 1) continue;
-      n.inner.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'none' }],
+      const dx = (was.left - now.left) / (k * n.s);
+      const dy = (was.top - now.top) / (k * n.s);
+      const r = was.width / now.width;
+      if (Math.abs(dx) + Math.abs(dy) < 1 && Math.abs(r - 1) < 0.01) continue;
+      n.inner.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${r})` }, { transform: 'none' }],
         { duration: 520, easing: 'cubic-bezier(.2,.75,.25,1)' });
     }
     edges.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 320, delay: 380, easing: 'ease-out', fill: 'backwards' });
@@ -894,17 +1014,17 @@ export class FlowView {
   // Update colours and text in place so the flow animation never restarts.
   #paint(monitors) {
     const byId = new Map(monitors.map((m) => [m.id, m]));
-    for (const { parentId, childId, g } of this.edgeEls) {
+    for (const { parentId, childId, g, off } of this.edgeEls) {
       const state = parentId == null ? 'flow' : streamState(byId.get(parentId));
       const child = byId.get(childId);
-      g.setAttribute('class', `stream ${state} to-${child?.status}`);
+      g.setAttribute('class', `stream ${state} to-${child?.status}${off ? ' offscreen' : ''}`);
     }
     this.svgEl?.classList.toggle('selecting', this.selectMode);
-    for (const [id, { g, title, sub, role, tags }] of this.nodeEls) {
+    for (const [id, { g, title, sub, role, tags, off }] of this.nodeEls) {
       const m = byId.get(id);
       if (!m) continue;
       const sel = this.selected.has(id) ? ' selected' : '';
-      g.setAttribute('class', `node ${m.status} type-${m.type}${role}${sel}${m.context ? ' context' : ''}`);
+      g.setAttribute('class', `node ${m.status} type-${m.type}${role}${sel}${m.context ? ' context' : ''}${off ? ' offscreen' : ''}`);
       sub.textContent = subline(m);
       title.textContent = `${m.name} — ${STATUS_LABEL[m.status]}${m.msg ? `\n${m.msg}` : ''}${tags.length ? `\nTags: ${tags.map((t) => t.name).join(', ')}` : ''}`;
     }

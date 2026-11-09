@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+- **Much more compact rings layout.** Rings now centre on the first monitor that branches out (e.g. the core switch), with the chain above it as a short trunk, instead of on the top-level monitor. Devices are stacked a few rows deep around their switch, and each monitor sits only as far out as it needs to. A network with a core switch, 14 closets and about 200 devices went from roughly 13,000 px square to about 3,200 × 2,300, so it fits on screen when zoomed out.
+- **Traced monitors stand out.** While tracing a monitor, everything downstream of it gets a little smaller with each step away (down to 65%). In the rings layout the smaller cards also pack tighter.
+- **Smooth with hundreds of monitors.** Streams no longer use a blur filter (their soft bed is the glow), and only what's on screen animates. Zoomed out below 30%, monitors show just their icon and name. On the 200-monitor test network the Falls went from about 11 to 60 frames per second.
+
 ## 0.8.0
 
 - **Tag icons.** Give a tag a default icon on the **Tags** page (built-in, emoji, image URL or upload). Monitors with that tag that are left on the *Automatic* icon show it, e.g. a switch icon for everything tagged *Switch*. A monitor's own icon still wins.
