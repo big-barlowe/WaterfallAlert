@@ -136,3 +136,48 @@ test('a failed refresh keeps the previous image', async () => {
   await t.sync([id]); // forced, as after saving the monitor
   assert.equal(t.icons.describe(t.store.getMonitor(id)).kind, 'image');
 });
+
+test('a monitor left on automatic takes its first tag’s icon', async () => {
+  const sites = {
+    'http://nas.local/': { body: '<link rel="icon" href="/fav.png">' },
+    'http://nas.local/fav.png': { body: PNG, type: 'image/png' },
+    'https://cdn.example/switch.png': { body: PNG, type: 'image/png' },
+  };
+  const { store, icons, add, sync, requests } = setup(sites);
+  const nas = add({ name: 'NAS', config: { url: 'http://nas.local/' } });
+  const sw = add({ name: 'Switch 1', type: 'ping', config: { host: 'sw1' } });
+  const own = add({ name: 'Switch 2', type: 'ping', config: { host: 'sw2' }, icon: 'emoji:🔌' });
+  const describe = (id) => icons.describe(store.getMonitor(id));
+  const a = store.createTag({ name: 'A switch', color: '#60a5fa', icon: 'builtin:switch' });
+  const b = store.createTag({ name: 'B lab', color: '#a78bfa', icon: 'url:https://cdn.example/switch.png' });
+  for (const id of [nas, sw, own]) store.setMonitorTags(id, [b, a]);
+  await sync();
+
+  // Tags are tried in name order; the monitor's own icon wins, and the tag's
+  // icon wins over the automatic favicon.
+  assert.deepEqual(describe(sw), { kind: 'builtin', name: 'switch' });
+  assert.deepEqual(describe(nas), { kind: 'builtin', name: 'switch' });
+  assert.deepEqual(describe(own), { kind: 'emoji', value: '🔌' });
+  assert.equal(requests.length, 0);
+
+  // A tag image URL is fetched and cached like a monitor's own.
+  store.updateTag(a, { name: 'A switch', color: '#60a5fa', icon: '' });
+  await sync();
+  assert.equal(describe(sw).kind, 'image');
+  assert.deepEqual(requests, ['https://cdn.example/switch.png', 'https://cdn.example/switch.png']);
+
+  // An uploaded tag image is served from the tag.
+  store.updateTag(b, { name: 'B lab', color: '#a78bfa', icon: 'upload' });
+  store.setTagIcon(b, { mime: 'image/png', data: PNG }, 1234);
+  await sync();
+  assert.deepEqual(describe(sw), { kind: 'image', src: `api/tags/${b}/icon?v=1234` });
+  assert.equal(store.getTagIcon(b).mime, 'image/png');
+  store.updateTag(b, { name: 'B lab', color: '#a78bfa', icon: '' });
+  assert.equal(store.getTagIcon(b), null);
+
+  // Without tag icons, the favicon comes back.
+  await sync();
+  assert.equal(describe(sw), null);
+  assert.equal(describe(nas).kind, 'image');
+  assert.throws(() => validateIconSpec('tag:1@2'), /Unknown icon/);
+});

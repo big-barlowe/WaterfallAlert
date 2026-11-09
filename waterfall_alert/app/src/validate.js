@@ -61,6 +61,8 @@ export function normalizeTag(body, existing) {
   if (name.includes('|')) throw new HttpError(400, 'Tag names cannot contain "|"');
   const color = String(body.color ?? existing?.color ?? '').toLowerCase();
   if (!TAG_COLOR.test(color)) throw new HttpError(400, 'Tag colour must look like #38bdf8');
-  return { name, color };
+  const icon = badRequest(() => validateIconSpec(body.icon ?? existing?.icon ?? ''));
+  if (icon === 'none') throw new HttpError(400, 'A tag icon can’t be "none"; leave it empty for no default icon');
+  return { name, color, icon };
 }
 

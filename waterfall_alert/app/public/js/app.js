@@ -2,8 +2,9 @@ import { api, h, svg, toast, modal, confirmDialog, storage, store, STATUS_LABEL,
 import { FlowView, lineage } from './flow.js';
 import { iconEl } from './icons.js';
 import { heartbeatBar, responseChart } from './chart.js';
-import { renderMonitorForm, renderNotificationForm } from './forms.js';
-import { tagPill, colorPicker, newTagDialog, matchIcon, TAG_MATCH } from './tags.js';
+import { renderMonitorForm, renderNotificationForm, iconChooser } from './forms.js';
+import { tagPill, colorPicker, newTagDialog, matchIcon, TAG_MATCH, tagIconView } from './tags.js';
+import { parseTagExpr, exprName } from './filter.js';
 
 const POLL_MS = 3000;
 const $ = (sel) => document.querySelector(sel);
@@ -20,13 +21,18 @@ const ui = {
   info: null,  // falls diagram: monitor whose details panel is open
   tagFilter: new Set(storage('tagFilter', [])), // tag ids
   tagMatch: storage('tagMatch', 'any'), // 'any' of the filter's tags (union) or 'all' of them (intersection)
+  tagExpr: storage('tagExpr', ''), // advanced filter (filter.js); replaces the pills while set
+  exprOpen: false,                 // where the advanced filter's editor is open: 'side', 'falls' or false
+  fallsFilter: false,              // the filter panel under the Falls title is open
   // Monitors picked for tagging or moving, in the Falls or the monitor list.
   selected: new Set(),
   selFrom: new Map(), // id -> the parent of the list row it was picked under
   selectMode: false,  // falls diagram: clicks select instead of focusing
-  tagDownstream: storage('tagDownstream', false),
+  tagDownstream: false, // selection bar: also tag everything below; unticked for each new selection
   flowView: {},       // falls diagram zoom and position, kept across visits
   popout: null,       // 'side' or 'falls': popped out to fill the window
+  fallsHeight: storage('fallsHeight', null), // dragged height of the Falls map; null = automatic
+  fallsLayout: storage('fallsLayout', 'tree'), // 'tree' or 'rings'
 };
 
 const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true });
@@ -38,9 +44,15 @@ const tagsOf = (m) => m.tags.map((t) => state.tagById.get(t)).filter(Boolean);
 // (`match`), plus everything above them (`show`) so the hierarchy still
 // reads. null = no filter.
 function filterView() {
-  if (!ui.tagFilter.size) return null;
-  const wanted = [...ui.tagFilter];
-  const hit = ui.tagMatch === 'all' ? (m) => wanted.every((t) => m.tags.includes(t)) : (m) => m.tags.some((t) => ui.tagFilter.has(t));
+  let hit;
+  if (ui.tagExpr) {
+    const expr = parseTagExpr(ui.tagExpr, state.tags);
+    if (!expr?.test) return null; // a broken expression (e.g. a tag was renamed) filters nothing
+    hit = (m) => expr.test(m.tags);
+  } else if (ui.tagFilter.size) {
+    const wanted = [...ui.tagFilter];
+    hit = ui.tagMatch === 'all' ? (m) => wanted.every((t) => m.tags.includes(t)) : (m) => m.tags.some((t) => ui.tagFilter.has(t));
+  } else return null;
   const match = new Set(state.monitors.filter(hit).map((m) => m.id));
   const show = new Set(match);
   const queue = [...match];
@@ -60,7 +72,25 @@ function setTagFilter(ids, match = ui.tagMatch) {
   ui.tagMatch = match;
   store('tagFilter', [...ui.tagFilter]);
   store('tagMatch', match);
+  setTagExpr('');
+}
+
+// The advanced filter. Setting one clears the pills, and vice versa.
+function setTagExpr(text) {
+  ui.tagExpr = text.trim();
+  ui.exprOpen = false;
+  store('tagExpr', ui.tagExpr);
+  if (ui.tagExpr) {
+    ui.tagFilter = new Set();
+    store('tagFilter', []);
+  }
   selectionChanged();
+}
+
+// The pills' filter written as an expression, to start the editor from.
+function pillsExpr() {
+  const names = state.tags.filter((t) => ui.tagFilter.has(t.id)).map((t) => exprName(t.name));
+  return names.join(ui.tagMatch === 'all' ? ' & ' : ' | ');
 }
 
 // ---- selection --------------------------------------------------------------
@@ -71,6 +101,7 @@ function pruneSelection() {
   const vis = filterView();
   for (const id of ui.selected) if (!state.byId.has(id) || (vis && !vis.show.has(id))) ui.selected.delete(id);
   for (const id of ui.selFrom.keys()) if (!ui.selected.has(id)) ui.selFrom.delete(id);
+  if (!ui.selected.size) ui.tagDownstream = false;
 }
 
 function selectionChanged() {
@@ -202,7 +233,7 @@ function renderTree() {
   }
 
   if (vis && !vis.match.size) {
-    fill(host, h('p', { class: 'muted pad' }, 'No monitors have ', ui.tagFilter.size > 1 ? `${ui.tagMatch} of these tags.` : 'this tag.'));
+    fill(host, h('p', { class: 'muted pad' }, ui.tagExpr ? 'No monitors match this filter.' : ['No monitors have ', ui.tagFilter.size > 1 ? `${ui.tagMatch} of these tags.` : 'this tag.']));
     return;
   }
 
@@ -237,9 +268,27 @@ function renderTagFilter() {
   const box = $('#tag-filter');
   box.hidden = !state.tags.length;
   if (!state.tags.length) return fill(box);
+  tagFilterControls(box, 'side');
+}
+
+// The tag filter's controls, in the sidebar ('side') or the Falls' filter
+// panel ('falls'): tag pills with any/all, or the advanced filter.
+function tagFilterControls(box, where) {
+  if (ui.exprOpen === where) return exprEditor(box);
+  const label = where === 'side' ? h('span', { class: 'tag-filter-label' }, 'Tags') : null;
+  if (ui.tagExpr) {
+    const expr = parseTagExpr(ui.tagExpr, state.tags);
+    return fill(box,
+      label,
+      h('span', { class: `expr-chip${expr?.error ? ' bad' : ''}`, title: expr?.error ? `Not filtering: ${expr.error}` : 'Advanced filter' },
+        h('button', { type: 'button', class: 'expr-text', title: 'Edit the filter', onclick: () => openExprEditor(where) }, ui.tagExpr),
+        h('button', { type: 'button', class: 'chip-x', 'aria-label': 'Clear the filter', title: 'Clear the filter', onclick: () => setTagExpr('') }, '×')),
+      expr?.error ? h('span', { class: 'expr-error' }, expr.error) : null,
+      h('a', { class: 'linkish', href: '#/tags' }, 'Manage'));
+  }
   const on = ui.tagFilter.size > 0;
   fill(box,
-    h('span', { class: 'tag-filter-label' }, 'Tags'),
+    label,
     state.tags.map((t) => {
       const active = ui.tagFilter.has(t.id);
       return tagPill(t, {
@@ -256,7 +305,139 @@ function renderTagFilter() {
     }),
     on && state.tags.length > 1 ? matchToggle() : null,
     on ? h('button', { class: 'linkish', onclick: () => setTagFilter([]) }, 'Clear') : null,
+    h('button', { class: 'linkish', title: 'Combine tags with and, or and not', onclick: () => openExprEditor(where) }, 'Advanced'),
     h('a', { class: 'linkish', href: '#/tags' }, 'Manage'));
+}
+
+// Opens the editor in the sidebar or in the Falls' filter panel. Only one is
+// open at a time, since they share element ids.
+function openExprEditor(where = 'side') {
+  ui.exprOpen = where;
+  if (where === 'falls') ui.fallsFilter = true;
+  renderTagFilter();
+  renderFallsFilter();
+  const input = $('#expr-input');
+  input?.focus();
+  input?.setSelectionRange(input.value.length, input.value.length);
+}
+
+// Operators the editor offers as buttons: [text, label, title].
+const EXPR_OPS = [
+  ['&', 'and', 'And: both sides must match'],
+  ['|', 'or', 'Or: either side may match'],
+  ['!', 'not', 'Not: everything except what follows'],
+  ['(', '(', 'Open a group (closed for you if you leave it open)'],
+  [')', ')', 'Close the group'],
+];
+
+// Back to the pills (the Falls' panel stays open).
+function closeExprEditor() {
+  ui.exprOpen = false;
+  renderTagFilter();
+  renderFallsFilter();
+}
+
+// The panel under the Falls title: the same controls as the sidebar,
+// straight into the advanced filter if that is the one in use.
+function openFallsFilter() {
+  if (ui.tagExpr) return openExprEditor('falls');
+  ui.fallsFilter = true;
+  renderFallsFilter();
+}
+
+function closeFallsFilter() {
+  ui.fallsFilter = false;
+  if (ui.exprOpen === 'falls') ui.exprOpen = false;
+  renderFallsFilter();
+}
+
+function renderFallsFilter() {
+  const host = $('#flow-filter-pop');
+  if (!host) return;
+  host.hidden = !ui.fallsFilter;
+  if (host.hidden) fill(host);
+  else tagFilterControls(host, 'falls');
+  $('.falls-filter-btn')?.setAttribute('aria-expanded', String(!host.hidden));
+}
+
+// One line of text, checked as you type. Clicking a tag or an operator
+// inserts it at the cursor, so a filter can be built without typing.
+// Re-rendering an open editor (the 3s poll does) only rechecks it, so a
+// half-typed filter survives.
+function exprEditor(box) {
+  if (box.querySelector('.expr-editor')) return box.exprCheck?.();
+  const input = h('input', {
+    id: 'expr-input',
+    class: 'expr-input',
+    value: ui.tagExpr || pillsExpr(),
+    placeholder: 'Switch & (Home | Cabin)',
+    spellcheck: false,
+    autocomplete: 'off',
+    'aria-label': 'Advanced tag filter',
+    'aria-describedby': 'expr-status',
+    oninput: () => check(),
+    onkeydown: (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        apply();
+      } else if (e.key === 'Escape') {
+        e.stopPropagation();
+        close();
+      }
+    },
+  });
+  const status = h('div', { id: 'expr-status', class: 'expr-status', 'aria-live': 'polite' });
+  const applyBtn = h('button', { type: 'button', class: 'btn small primary', onclick: () => apply() }, 'Filter');
+  const check = () => {
+    const expr = parseTagExpr(input.value, state.tags);
+    applyBtn.disabled = Boolean(expr?.error);
+    if (!expr) return fill(status, h('span', { class: 'muted' }, 'Empty: no filter.'));
+    if (expr.error) return fill(status, h('span', { class: 'expr-error' }, expr.error));
+    const n = state.monitors.filter((m) => expr.test(m.tags)).length;
+    fill(status, h('span', { class: 'muted' }, `${n} of ${state.monitors.length} monitors match.`));
+  };
+  const apply = () => {
+    const expr = parseTagExpr(input.value, state.tags);
+    if (expr?.error) return;
+    if (box.id === 'flow-filter-pop') ui.fallsFilter = false;
+    setTagExpr(expr ? input.value.trimEnd() + ')'.repeat(expr.unclosed) : '');
+  };
+  const close = closeExprEditor;
+  box.exprCheck = () => check();
+  // Spaces around & and |, none inside brackets or after !.
+  const insert = (token, op) => {
+    const { selectionStart, selectionEnd, value } = input;
+    let before = value.slice(0, selectionStart);
+    let text = op ? token : exprName(token);
+    if (op === ')') before = before.trimEnd();
+    else if (before && !/\s$/.test(before) && (op === '&' || op === '|' || !/[(!]$/.test(before))) text = ` ${text}`;
+    if (op === '&' || op === '|') text += ' ';
+    input.value = before + text + value.slice(selectionEnd);
+    const at = before.length + text.length;
+    input.focus();
+    input.setSelectionRange(at, at);
+    check();
+  };
+  fill(box,
+    h('div', { class: 'expr-editor' },
+      input,
+      h('div', { class: 'expr-row' }, status, applyBtn,
+        h('button', { type: 'button', class: 'btn small ghost', onclick: close }, 'Cancel')),
+      h('div', { class: 'expr-ops', role: 'group', 'aria-label': 'Insert an operator' }, EXPR_OPS.map(([op, label, title]) => h('button', {
+        type: 'button',
+        class: 'expr-op',
+        title,
+        'aria-label': title,
+        onclick: () => insert(op, op),
+      }, op === label ? op : [h('b', null, op), ` ${label}`]))),
+      h('div', { class: 'expr-tags' }, state.tags.map((t) => tagPill(t, {
+        title: `Insert ${t.name}`,
+        onclick: () => insert(t.name),
+      }))),
+      h('p', { class: 'expr-help' },
+        'Click operators and tags to build a filter, or type it. ',
+        'E.g. ', h('code', null, 'Switch & (Home | Cabin)'), ' shows the switches at either site.')));
+  check();
 }
 
 // Any of the tags (union) or all of them (intersection).
@@ -513,6 +694,55 @@ function initSideResize() {
   });
 }
 
+// The gap between the Falls and Recent events: drag it to set the map's
+// height, double-click for automatic again.
+function fallsResizer() {
+  const setH = (px, save) => {
+    ui.fallsHeight = flow.setHeight(px);
+    handle.setAttribute('aria-valuenow', ui.fallsHeight ?? Math.round($('.flow-map').getBoundingClientRect().height));
+    if (save) store('fallsHeight', ui.fallsHeight);
+  };
+  const mapH = () => $('.flow-map').getBoundingClientRect().height;
+  const handle = h('div', {
+    class: 'falls-resize',
+    role: 'separator',
+    'aria-orientation': 'horizontal',
+    'aria-label': 'Height of the Falls',
+    tabindex: 0,
+    title: 'Drag to resize the Falls. Double-click for automatic.',
+    onpointerdown: (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const start = { y: e.clientY, h: mapH() };
+      try {
+        handle.setPointerCapture(e.pointerId);
+      } catch {
+        // pointer already gone
+      }
+      document.body.classList.add('resizing-v');
+      const move = (ev) => setH(start.h + ev.clientY - start.y, false);
+      const end = () => {
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', end);
+        handle.removeEventListener('pointercancel', end);
+        document.body.classList.remove('resizing-v');
+        setH(ui.fallsHeight, true);
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', end);
+      handle.addEventListener('pointercancel', end);
+    },
+    ondblclick: () => setH(null, true),
+    onkeydown: (e) => {
+      const step = { ArrowUp: -24, ArrowDown: 24 }[e.key];
+      if (!step) return;
+      e.preventDefault();
+      setH(mapH() + step * (e.shiftKey ? 4 : 1), true);
+    },
+  });
+  return handle;
+}
+
 const popIcon = (out) => svg('svg', { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': 'true' },
   svg('path', { d: out ? 'M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9' : 'M13.5 6.5h-4v-4M9.5 6.5L14 2M2.5 9.5h4v4M6.5 9.5L2 14' }));
 
@@ -552,12 +782,19 @@ async function renderDashboard(isUpdate = false) {
       onToggle: (id) => toggleSelected(id),
       onMarquee: setSelection,
       view: ui.flowView,
+      height: ui.fallsHeight,
+      layout: ui.fallsLayout,
+      onLayout: (mode) => {
+        ui.fallsLayout = mode;
+        store('fallsLayout', mode);
+      },
     });
     fill(main, h('div', { class: 'dashboard' },
       h('div', { class: 'stat-row', id: 'dash-stats' }),
       h('section', { class: 'card falls' },
         h('div', { class: 'card-head' },
           h('div', { class: 'falls-title' }, h('h2', null, 'The Falls'), h('div', { id: 'flow-focus', class: 'flow-focus', 'aria-live': 'polite' })),
+          h('div', { id: 'flow-filter-pop', class: 'expr-pop', role: 'group', 'aria-label': 'Tag filter', hidden: true }),
           h('div', { class: 'falls-tools' },
             h('div', { class: 'legend' },
               h('span', { class: 'key flow' }, 'Flowing'),
@@ -583,6 +820,7 @@ async function renderDashboard(isUpdate = false) {
           h('aside', { id: 'flow-info', class: 'flow-info', 'aria-label': 'Monitor details', hidden: true })),
         // Below the diagram and sticky, so it never pushes the nodes around.
         h('div', { id: 'flow-select', class: 'flow-select', 'aria-live': 'polite', hidden: true })),
+      fallsResizer(),
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, 'Recent events')),
         h('div', { id: 'dash-events' }))));
@@ -604,6 +842,7 @@ async function renderDashboard(isUpdate = false) {
   toggle.setAttribute('aria-pressed', String(ui.selectMode));
   toggle.textContent = ui.selectMode ? 'Done selecting' : 'Select';
   renderFocusBar(vis);
+  renderFallsFilter();
   renderSelectBar();
   renderInfo();
   fill($('#flow-empty'), state.loaded && state.monitors.length && !shown.length
@@ -668,7 +907,6 @@ function renderSelectBar() {
           checked: ui.tagDownstream,
           onchange: (e) => {
             ui.tagDownstream = e.target.checked;
-            store('tagDownstream', ui.tagDownstream);
             renderSelectBar();
           },
         }),
@@ -705,11 +943,23 @@ function setFocus(focus, info) {
 function renderFocusBar(vis) {
   const f = state.byId.get(ui.focus);
   const filtered = state.tags.filter((t) => ui.tagFilter.has(t.id));
+  // The filter in use (click it to edit it), or a button to add one.
+  const toggleEditor = () => (ui.fallsFilter ? closeFallsFilter() : openFallsFilter());
   const filterChip = vis ? h('span', { class: 'focus-chip filter-chip' },
-    filtered.length > 1 ? h('span', { class: 'filter-match', title: TAG_MATCH[ui.tagMatch].title }, matchIcon(ui.tagMatch)) : null,
-    filtered.map((t) => tagPill(t)),
-    h('span', { class: 'muted' }, `${vis.match.size} of ${state.monitors.length}`),
-    h('button', { class: 'chip-x', 'aria-label': 'Clear the tag filter', title: 'Clear the tag filter', onclick: () => setTagFilter([]) }, '×')) : null;
+    h('button', { type: 'button', class: 'filter-edit falls-filter-btn', title: 'Edit the filter', 'aria-expanded': String(ui.fallsFilter), onclick: toggleEditor },
+      ui.tagExpr ? h('code', { class: 'filter-expr' }, ui.tagExpr) : [
+        filtered.length > 1 ? h('span', { class: 'filter-match', title: TAG_MATCH[ui.tagMatch].title }, matchIcon(ui.tagMatch)) : null,
+        filtered.map((t) => tagPill(t)),
+      ],
+      h('span', { class: 'muted' }, `${vis.match.size} of ${state.monitors.length}`)),
+    h('button', { class: 'chip-x', 'aria-label': 'Clear the tag filter', title: 'Clear the tag filter', onclick: () => setTagFilter([]) }, '×'))
+    : state.tags.length ? h('button', {
+      type: 'button',
+      class: 'btn small ghost falls-filter-btn',
+      title: 'Show only monitors with certain tags',
+      'aria-expanded': String(ui.fallsFilter),
+      onclick: toggleEditor,
+    }, '+ Filter') : null;
   if (!f) {
     fill($('#flow-focus'), filterChip, state.monitors.length && !vis ? h('span', { class: 'muted small' }, 'Click a monitor to trace what it depends on') : null);
     return;
@@ -1015,7 +1265,14 @@ async function renderTags() {
           onchange: (e) => save({ name: e.target.value }),
           onkeydown: (e) => e.key === 'Enter' && e.target.blur(),
         })),
-      colorPicker(t.color, (c) => save({ color: c }), `Colour for ${t.name}`),
+      h('div', { class: 'tag-item-look' },
+        colorPicker(t.color, (c) => save({ color: c }), `Colour for ${t.name}`),
+        h('button', {
+          type: 'button',
+          class: 'btn small tag-icon-btn',
+          title: t.icon ? `Default icon for monitors tagged ${t.name}` : `Give monitors tagged ${t.name} a default icon`,
+          onclick: () => tagIconDialog(t, reload),
+        }, iconEl(tagIconView(t), 18), t.icon ? 'Icon' : '+ Icon')),
       h('div', { class: 'tag-item-meta' },
         t.count
           ? h('button', {
@@ -1042,10 +1299,43 @@ async function renderTags() {
     h('div', { class: 'page-head' },
       h('h1', null, 'Tags'),
       h('button', { class: 'btn primary', onclick: () => newTagDialog(tags, reload) }, '+ New tag'),
-      h('p', { class: 'muted' }, 'Group monitors across the hierarchy, by site, owner or anything else. Filter by tag in the sidebar: pick several tags and choose whether a monitor needs any of them or all of them. To tag several monitors at once, select them: shift-click them in the Falls or the monitor list, or shift-drag a box in the Falls.')),
+      h('p', { class: 'muted' }, 'Group monitors across the hierarchy, by site, owner or anything else. Give a tag an icon to use it for every monitor that carries it. Filter by tag in the sidebar: pick several tags and choose whether a monitor needs any of them or all of them, or use Advanced for combinations like Switch & (Home | Cabin). To tag several monitors at once, select them: shift-click them in the Falls or the monitor list, or shift-drag a box in the Falls.')),
     tags.length
       ? h('div', { class: 'card tag-list' }, tags.map(editor))
       : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No tags yet.'))));
+}
+
+// The default icon for monitors with this tag that are left on automatic.
+function tagIconDialog(t, onSaved) {
+  const chooser = iconChooser({
+    id: 'tag-icon',
+    label: 'Default icon',
+    spec: t.icon,
+    modes: [['auto', 'No default icon'], ['builtin', 'Built-in'], ['emoji', 'Emoji'], ['url', 'Image URL'], ['upload', 'Upload']],
+    current: t.icon === 'upload' ? tagIconView(t) : null,
+    autoHelp: () => 'Monitors with this tag keep their usual automatic icon.',
+  });
+  modal(`Icon for ${t.name}`, h('div', { class: 'stack-sm' },
+    h('p', { class: 'muted small' }, `Monitors tagged ${t.name} show this icon unless they have an icon of their own. It also replaces their automatic icon (such as a website’s favicon). With several tags, the first one in alphabetical order that has an icon is used.`),
+    chooser.el),
+  [{
+    label: 'Save',
+    onClick: async () => {
+      const problem = chooser.problem();
+      if (problem) {
+        toast(problem, 'error');
+        return false;
+      }
+      try {
+        await api(`tags/${t.id}`, { method: 'PUT', body: { name: t.name, color: t.color, icon: chooser.spec(), iconData: chooser.data() ?? undefined } });
+        toast(`Saved the icon for ${t.name}`, 'success');
+        await onSaved();
+      } catch (err) {
+        toast(err.message, 'error');
+        return false;
+      }
+    },
+  }]);
 }
 
 // ---- settings ---------------------------------------------------------------
@@ -1219,6 +1509,8 @@ function parseRoute() {
 
 async function route() {
   if (ui.popout) setPopout(null);
+  ui.fallsFilter = false;
+  if (ui.exprOpen === 'falls') ui.exprOpen = false;
   ui.route = parseRoute();
   const r = ui.route;
   document.querySelectorAll('.nav a').forEach((a) => a.classList.toggle('on', a.dataset.route === (r.name === 'monitor' || r.name === 'edit' || r.name === 'add' ? 'dashboard' : r.name)));
@@ -1257,8 +1549,14 @@ $('#search').addEventListener('input', (e) => {
   renderTree();
 });
 window.addEventListener('hashchange', route);
+// The Falls' filter panel closes when you click elsewhere.
+document.addEventListener('pointerdown', (e) => {
+  if (ui.fallsFilter && !e.target.closest('#flow-filter-pop, .falls-filter-btn')) closeFallsFilter();
+});
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape' || document.querySelector('.modal-back')) return;
+  if (ui.exprOpen) return closeExprEditor();
+  if (ui.fallsFilter) return closeFallsFilter();
   if (ui.selected.size) return setSelection([]);
   // Undo the Falls' own state first, unless only the list is in view.
   if (ui.route?.name === 'dashboard' && ui.popout !== 'side') {

@@ -1,6 +1,6 @@
 import { api, h, toast, TYPE_LABEL, fill } from './util.js';
 import { GLYPHS, iconEl, glyphPreview } from './icons.js';
-import { tagPill, newTagDialog } from './tags.js';
+import { tagPill, newTagDialog, tagIconView } from './tags.js';
 
 const TYPE_FIELDS = {
   group: [],
@@ -107,6 +107,134 @@ async function toIconDataUrl(file) {
   }
 }
 
+// The icon picker of the monitor form, also used for tags. `modes` lists the
+// choices ([key, label]); `current` is the uploaded image saved already (a
+// descriptor), and autoPreview()/autoHelp() describe the 'auto' choice.
+// spec() is what to save, data() a newly chosen upload as a data URL, and
+// problem() says what is missing before it can be saved.
+export function iconChooser({ id, label = 'Icon', spec = '', modes, current = null, autoPreview = () => null, autoHelp = () => '' }) {
+  const el = h('div', { class: 'field icon-field' });
+  // Remember each mode's value so flipping between modes loses nothing.
+  let mode = iconMode(spec);
+  if (!modes.some(([k]) => k === mode)) mode = modes[0][0];
+  const memo = { builtin: 'server', emoji: '', url: '' };
+  if (['builtin', 'emoji', 'url'].includes(mode)) memo[mode] = spec.slice(mode.length + 1);
+  let upload = null;
+
+  const preview = () => {
+    if (mode === 'builtin') return iconEl({ kind: 'builtin', name: memo.builtin }, 30);
+    if (mode === 'emoji') return memo.emoji ? iconEl({ kind: 'emoji', value: memo.emoji }, 30) : null;
+    if (mode === 'url') return memo.url ? iconEl({ kind: 'image', src: memo.url }, 30) : null;
+    if (mode === 'upload') return upload ? iconEl({ kind: 'image', src: upload }, 30) : current ? iconEl(current, 30) : null;
+    if (mode === 'auto') return iconEl(autoPreview(), 30);
+    return null;
+  };
+
+  const render = () => {
+    const previewBox = h('div', { class: 'icon-preview', title: 'Preview' }, preview() ?? h('span', { class: 'muted' }, '—'));
+    const refresh = () => fill(previewBox, preview() ?? h('span', { class: 'muted' }, '—'));
+    let controls = null;
+    let help = null;
+    if (mode === 'auto') {
+      help = autoHelp();
+    } else if (mode === 'builtin') {
+      controls = h('div', { class: 'glyph-grid', role: 'listbox', 'aria-label': 'Built-in icons' },
+        Object.keys(GLYPHS).map((name) => h('button', {
+          type: 'button',
+          class: `glyph-pick${memo.builtin === name ? ' on' : ''}`,
+          title: name,
+          role: 'option',
+          'aria-selected': String(memo.builtin === name),
+          onclick: () => {
+            memo.builtin = name;
+            render();
+          },
+        }, glyphPreview(name, 20))));
+    } else if (mode === 'emoji') {
+      const input = h('input', {
+        id: `${id}-emoji`,
+        class: 'emoji-input',
+        maxlength: 16,
+        value: memo.emoji,
+        placeholder: '🖥️',
+        'aria-label': 'Emoji',
+        oninput: (e) => {
+          memo.emoji = e.target.value.trim();
+          refresh();
+        },
+      });
+      controls = h('div', { class: 'emoji-row' }, input,
+        EMOJI.map((em) => h('button', {
+          type: 'button',
+          class: 'emoji-pick',
+          onclick: () => {
+            memo.emoji = em;
+            input.value = em;
+            refresh();
+          },
+        }, em)));
+    } else if (mode === 'url') {
+      controls = h('input', {
+        id: `${id}-url`,
+        type: 'url',
+        value: memo.url,
+        placeholder: 'https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/proxmox.svg',
+        'aria-label': 'Image URL',
+        oninput: (e) => {
+          memo.url = e.target.value.trim();
+        },
+        onchange: refresh,
+      });
+      help = 'Waterfall Alert downloads and caches the image, so the browser never has to reach that site. The dashboard-icons project has logos for most self-hosted apps.';
+    } else if (mode === 'upload') {
+      controls = h('input', {
+        type: 'file',
+        accept: 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/x-icon,.ico',
+        'aria-label': 'Icon image',
+        onchange: async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          try {
+            upload = await toIconDataUrl(file);
+            refresh();
+          } catch {
+            toast('Couldn’t read that image', 'error');
+          }
+        },
+      });
+      help = 'PNG, JPEG, GIF, WebP, SVG or ICO. It is shrunk to 128 px.';
+    }
+    fill(el,
+      h('label', { for: `${id}-mode` }, label),
+      h('div', { class: 'icon-row' },
+        previewBox,
+        h('div', { class: 'icon-controls' },
+          h('select', {
+            id: `${id}-mode`,
+            onchange: (e) => {
+              mode = e.target.value;
+              render();
+            },
+          }, modes.map(([k, text]) => h('option', { value: k, selected: mode === k }, text))),
+          controls)),
+      help ? h('small', null, help) : null);
+  };
+  render();
+
+  return {
+    el,
+    render,
+    spec: () => (mode === 'auto' ? '' : ['none', 'upload'].includes(mode) ? mode : memo[mode] ? `${mode}:${memo[mode]}` : ''),
+    data: () => (mode === 'upload' ? upload : null),
+    problem: () => {
+      if (mode === 'emoji' && !memo.emoji) return 'Enter an emoji for the icon, or pick another option';
+      if (mode === 'url' && !memo.url) return 'Enter an image URL for the icon, or pick another option';
+      if (mode === 'upload' && !upload && !current) return 'Choose an image to upload for the icon';
+      return null;
+    },
+  };
+}
+
 // Everything reachable downstream of `start` in the edited graph.
 function downstream(childMap, start) {
   const seen = new Set();
@@ -150,7 +278,6 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
 
   const form = h('form', { class: 'card form', novalidate: true });
   const typeBox = h('div');
-  const iconBox = h('div', { class: 'field icon-field' });
   const hierarchyBox = h('div');
   const tagsBox = h('div', { class: 'field' });
 
@@ -161,121 +288,33 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       draft.type === 'push' ? pushInfo() : null);
   };
 
-  // Icon: remember each mode's value so flipping between modes loses nothing.
+  // Icon. Left on automatic, the monitor takes its tags' icon if one has one.
   draft.icon ??= '';
   const live = id ? state.byId.get(id)?.icon : null; // the icon shown right now
-  let mode = iconMode(draft.icon);
-  const memo = { builtin: 'server', emoji: '', url: '' };
-  if (['builtin', 'emoji', 'url'].includes(mode)) memo[mode] = draft.icon.slice(mode.length + 1);
-
-  const iconSpec = () => (mode === 'auto' ? '' : ['none', 'upload'].includes(mode) ? mode : memo[mode] ? `${mode}:${memo[mode]}` : '');
-
-  const iconPreview = () => {
-    if (mode === 'builtin') return iconEl({ kind: 'builtin', name: memo.builtin }, 30);
-    if (mode === 'emoji') return memo.emoji ? iconEl({ kind: 'emoji', value: memo.emoji }, 30) : null;
-    if (mode === 'url') return memo.url ? iconEl({ kind: 'image', src: memo.url }, 30) : null;
-    if (mode === 'upload') {
-      if (draft.iconData) return iconEl({ kind: 'image', src: draft.iconData }, 30);
-      return existing?.icon === 'upload' ? iconEl(live, 30) : null;
-    }
-    if (mode === 'auto' && draft.type === 'group') return iconEl({ kind: 'builtin', name: 'folder' }, 30);
-    if (mode === 'auto' && ['http', 'minecraft'].includes(draft.type) && existing?.icon === '' && existing.type === draft.type) return iconEl(live, 30);
-    if (mode === 'auto' && draft.type === 'minecraft') return iconEl({ kind: 'builtin', name: 'gamepad' }, 30);
-    return null;
-  };
-
-  const renderIcon = () => {
-    const previewBox = h('div', { class: 'icon-preview', title: 'Preview' }, iconPreview() ?? h('span', { class: 'muted' }, '—'));
-    const refresh = () => fill(previewBox, iconPreview() ?? h('span', { class: 'muted' }, '—'));
-    let controls = null;
-    let help = null;
-    if (mode === 'auto') {
-      help = draft.type === 'http'
-        ? 'Uses the website’s favicon. Waterfall Alert fetches it after you save, and re-checks it weekly.'
+  const tagIcon = () => state.tags.find((t) => t.icon && draft.tagIds?.includes(t.id));
+  const icon = iconChooser({
+    id: 'f-icon',
+    spec: draft.icon,
+    modes: ICON_MODES,
+    current: existing?.icon === 'upload' ? live : null,
+    autoPreview: () => {
+      const t = tagIcon();
+      if (t) return tagIconView(t);
+      if (draft.type === 'group') return { kind: 'builtin', name: 'folder' };
+      if (['http', 'minecraft'].includes(draft.type) && existing?.icon === '' && existing.type === draft.type) return live;
+      if (draft.type === 'minecraft') return { kind: 'builtin', name: 'gamepad' };
+      return null;
+    },
+    autoHelp: () => {
+      const t = tagIcon();
+      if (t) return `Uses the icon of its ${t.name} tag. Change it on the Tags page.`;
+      return draft.type === 'http'
+        ? 'Uses the website’s favicon (unless one of its tags has an icon). Waterfall Alert fetches it after you save, and re-checks it weekly.'
         : draft.type === 'minecraft' ? 'Uses the server’s own icon (the one in the multiplayer list), fetched after you save.'
-          : draft.type === 'group' ? 'Groups show a folder.' : 'HTTP monitors show the website’s favicon, Minecraft servers their server icon, and groups a folder. Other types have no icon unless you pick one.';
-    } else if (mode === 'builtin') {
-      controls = h('div', { class: 'glyph-grid', role: 'listbox', 'aria-label': 'Built-in icons' },
-        Object.keys(GLYPHS).map((name) => h('button', {
-          type: 'button',
-          class: `glyph-pick${memo.builtin === name ? ' on' : ''}`,
-          title: name,
-          role: 'option',
-          'aria-selected': String(memo.builtin === name),
-          onclick: () => {
-            memo.builtin = name;
-            renderIcon();
-          },
-        }, glyphPreview(name, 20))));
-    } else if (mode === 'emoji') {
-      const input = h('input', {
-        id: 'f-icon-emoji',
-        class: 'emoji-input',
-        maxlength: 16,
-        value: memo.emoji,
-        placeholder: '🖥️',
-        'aria-label': 'Emoji',
-        oninput: (e) => {
-          memo.emoji = e.target.value.trim();
-          refresh();
-        },
-      });
-      controls = h('div', { class: 'emoji-row' }, input,
-        EMOJI.map((em) => h('button', {
-          type: 'button',
-          class: 'emoji-pick',
-          onclick: () => {
-            memo.emoji = em;
-            input.value = em;
-            refresh();
-          },
-        }, em)));
-    } else if (mode === 'url') {
-      controls = h('input', {
-        id: 'f-icon-url',
-        type: 'url',
-        value: memo.url,
-        placeholder: 'https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/proxmox.svg',
-        'aria-label': 'Image URL',
-        oninput: (e) => {
-          memo.url = e.target.value.trim();
-        },
-        onchange: refresh,
-      });
-      help = 'Waterfall Alert downloads and caches the image, so the browser never has to reach that site. The dashboard-icons project has logos for most self-hosted apps.';
-    } else if (mode === 'upload') {
-      controls = h('input', {
-        type: 'file',
-        accept: 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/x-icon,.ico',
-        'aria-label': 'Icon image',
-        onchange: async (e) => {
-          const file = e.target.files[0];
-          if (!file) return;
-          try {
-            draft.iconData = await toIconDataUrl(file);
-            refresh();
-          } catch {
-            toast('Couldn’t read that image', 'error');
-          }
-        },
-      });
-      help = 'PNG, JPEG, GIF, WebP, SVG or ICO. It is shrunk to 128 px.';
-    }
-    fill(iconBox,
-      h('label', { for: 'f-icon-mode' }, 'Icon'),
-      h('div', { class: 'icon-row' },
-        previewBox,
-        h('div', { class: 'icon-controls' },
-          h('select', {
-            id: 'f-icon-mode',
-            onchange: (e) => {
-              mode = e.target.value;
-              renderIcon();
-            },
-          }, ICON_MODES.map(([k, label]) => h('option', { value: k, selected: mode === k }, label))),
-          controls)),
-      help ? h('small', null, help) : null);
-  };
+          : draft.type === 'group' ? 'Groups show a folder.' : 'Uses the icon of the first of its tags that has one. Otherwise HTTP monitors show the website’s favicon, Minecraft servers their server icon, and groups a folder.';
+    },
+  });
+  const renderIcon = () => icon.render();
 
   const pushInfo = () => {
     if (!existing?.pushToken) return h('p', { class: 'help' }, 'Save the monitor to get its push URL.');
@@ -316,6 +355,8 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
     const byId = new Map(tags.map((t) => [t.id, t]));
     const others = tags.filter((t) => !draft.tagIds.includes(t.id));
     const added = addedTags().map((t) => byId.get(t)?.name).filter(Boolean);
+    if (!draft.childIds.length || !added.length) tagsDownstream = false; // starts unticked whenever it reappears
+    if (!icon.spec()) icon.render(); // its automatic icon may come from a tag
     fill(tagsBox,
       h('label', { for: 'f-tag-add' }, 'Tags'),
       h('div', { class: 'tag-edit' },
@@ -426,7 +467,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       h('div', { class: 'field' },
         h('label', { for: 'f-desc' }, 'Description (optional)'),
         h('input', { id: 'f-desc', value: draft.description, oninput: (e) => { draft.description = e.target.value; } })),
-      iconBox,
+      icon.el,
       tagsBox),
     h('section', null,
       h('h3', null, 'Hierarchy'),
@@ -464,11 +505,11 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
     const missing = TYPE_FIELDS[draft.type].find((f) => f.required && !String(draft.config[f.key] ?? '').trim());
     if (!draft.name.trim()) return toast('Name is required', 'error');
     if (missing) return toast(`${missing.label} is required`, 'error');
-    draft.icon = iconSpec();
-    if (mode === 'emoji' && !memo.emoji) return toast('Enter an emoji for the icon, or pick another option', 'error');
-    if (mode === 'url' && !memo.url) return toast('Enter an image URL for the icon, or pick another option', 'error');
-    if (mode === 'upload' && !draft.iconData && existing?.icon !== 'upload') return toast('Choose an image to upload for the icon', 'error');
-    if (mode !== 'upload') delete draft.iconData;
+    const iconProblem = icon.problem();
+    if (iconProblem) return toast(iconProblem, 'error');
+    draft.icon = icon.spec();
+    if (icon.data()) draft.iconData = icon.data();
+    else delete draft.iconData;
     draft.tagsDownstream = tagsDownstream && addedTags().length > 0;
     for (const f of TYPE_FIELDS[draft.type]) if (f.def && draft.config[f.key] == null) draft.config[f.key] = f.def;
     try {

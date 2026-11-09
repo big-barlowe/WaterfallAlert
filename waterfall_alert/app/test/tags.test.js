@@ -43,7 +43,7 @@ function setup() {
 test('tags are validated and names are unique regardless of case', async () => {
   const { call } = setup();
   const t = await call('POST', '/api/tags', { name: '  Home   lab ', color: '#38BDF8' });
-  assert.deepEqual(t, { id: t.id, name: 'Home lab', color: '#38bdf8' });
+  assert.deepEqual(t, { id: t.id, name: 'Home lab', color: '#38bdf8', icon: '', iconV: 0 });
   await assert.rejects(call('POST', '/api/tags', { name: 'home LAB', color: '#ffffff' }), /already a tag called "Home lab"/);
   await assert.rejects(call('POST', '/api/tags', { name: 'x', color: 'red' }), /colour/);
   await assert.rejects(call('POST', '/api/tags', { name: ' ', color: '#ffffff' }), /required/);
@@ -99,4 +99,22 @@ test('saving a monitor sets its tags and can pass new ones downstream', async ()
   await call('DELETE', `/api/tags/${b.id}`);
   assert.ok(engine.version > v);
   assert.deepEqual(await tagsOf('NAS'), ['Prod']);
+});
+
+test('a tag can carry a default icon, uploaded or not', async () => {
+  const { call, store } = setup();
+  const png = 'data:image/png;base64,' + Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString('base64');
+  const t = await call('POST', '/api/tags', { name: 'Switch', color: '#60a5fa', icon: 'builtin:switch' });
+  assert.equal(t.icon, 'builtin:switch');
+  await assert.rejects(call('PUT', `/api/tags/${t.id}`, { icon: 'none' }), /can’t be "none"/);
+  await assert.rejects(call('PUT', `/api/tags/${t.id}`, { icon: 'upload' }), /Choose an image/);
+  const up = await call('PUT', `/api/tags/${t.id}`, { icon: 'upload', iconData: png });
+  assert.ok(up.iconV > 0);
+  const img = await call('GET', `/api/tags/${t.id}/icon`);
+  assert.equal(img.headers['Content-Security-Policy'].includes('sandbox'), true);
+  // keeping 'upload' without a new image keeps the old one; renaming leaves it
+  await call('PUT', `/api/tags/${t.id}`, { name: 'Switches', icon: 'upload' });
+  assert.ok(store.getTagIcon(t.id));
+  await call('PUT', `/api/tags/${t.id}`, { icon: '' });
+  await assert.rejects(call('GET', `/api/tags/${t.id}/icon`), /No icon/);
 });

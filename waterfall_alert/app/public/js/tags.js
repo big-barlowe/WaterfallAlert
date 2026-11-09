@@ -6,6 +6,17 @@ export const TAG_COLORS = ['#60a5fa', '#818cf8', '#a78bfa', '#e879f9', '#f472b6'
 
 export const nextTagColor = (tags) => TAG_COLORS.find((c) => !tags.some((t) => t.color === c)) ?? TAG_COLORS[tags.length % TAG_COLORS.length];
 
+// What to draw for a tag's default icon (null if it has none), in the form
+// iconEl()/iconSvg() take.
+export function tagIconView(tag) {
+  const spec = tag?.icon;
+  if (!spec) return null;
+  if (spec === 'upload') return { kind: 'image', src: `api/tags/${tag.id}/icon?v=${tag.iconV}` };
+  const i = spec.indexOf(':');
+  const value = spec.slice(i + 1);
+  return { builtin: { kind: 'builtin', name: value }, emoji: { kind: 'emoji', value }, url: { kind: 'image', src: value } }[spec.slice(0, i)] ?? null;
+}
+
 // A small coloured pill. With `onclick` it is a button.
 export function tagPill(tag, { onclick, title, extra, pressed, cls = '' } = {}) {
   return h(onclick ? 'button' : 'span', {

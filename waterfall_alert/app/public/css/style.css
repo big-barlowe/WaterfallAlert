@@ -147,6 +147,13 @@ kbd { background: var(--panel-2); border: 1px solid var(--border); border-radius
 }
 .side-resize:hover::after, .side-resize:focus-visible::after, body.resizing .side-resize::after { opacity: 0.6; }
 body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
+body.resizing-v { cursor: row-resize; user-select: none; -webkit-user-select: none; }
+
+/* the gap between the Falls and Recent events */
+.falls-resize { height: 16px; margin: -16px 0; position: relative; z-index: 1; cursor: row-resize; touch-action: none; outline: none; }
+.falls-resize::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 3px; margin-top: -1.5px; border-radius: 2px; background: var(--water); opacity: 0; transition: opacity 0.15s; }
+.falls-resize:hover::after, .falls-resize:focus-visible::after, body.resizing-v .falls-resize::after { opacity: 0.6; }
+body.popout-falls .falls-resize { display: none; }
 .stack, .dashboard, .detail { display: flex; flex-direction: column; gap: 16px; }
 
 @media (max-width: 860px) {
@@ -388,6 +395,11 @@ body.popout-falls .flow-select { position: static; }
 .map-btn { min-width: 28px; height: 28px; padding: 0 6px; display: grid; place-items: center; border: 0; border-radius: 7px; background: none; color: var(--text); font: inherit; font-size: 1.05rem; line-height: 1; cursor: pointer; }
 .map-btn:hover { background: rgba(56, 189, 248, 0.16); }
 .map-btn:focus-visible { outline: 2px solid var(--water); outline-offset: -2px; }
+.map-layouts { display: flex; gap: 2px; padding-right: 3px; margin-right: 1px; border-right: 1px solid var(--border-soft); }
+.map-layout { color: var(--muted); }
+.map-layout[aria-pressed="true"] { background: rgba(56, 189, 248, 0.2); color: var(--foam); }
+.layout-icon .li-line { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+.layout-icon .li-dot { fill: currentColor; }
 .map-zoom { min-width: 46px; font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .map-fit path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 .map-hint { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 6px 12px; border-radius: 999px; background: rgba(4, 17, 31, 0.88); border: 1px solid var(--border); color: var(--text); font-size: 0.8rem; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 0.2s; }
@@ -539,6 +551,26 @@ button.tag-pill:hover { border-color: var(--tag); background: color-mix(in srgb,
 .venn .venn-fill { fill: currentColor; opacity: 0.6; }
 .filter-match { display: inline-flex; color: var(--foam); }
 
+/* advanced tag filter */
+.expr-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 2px 1px 4px; border-radius: 8px; background: rgba(56, 189, 248, 0.12); border: 1px solid rgba(56, 189, 248, 0.4); }
+.expr-chip.bad { border-color: rgba(248, 113, 113, 0.6); background: rgba(248, 113, 113, 0.08); }
+.expr-chip .chip-x { width: 18px; height: 18px; flex: none; }
+.expr-text { font: 0.8rem var(--mono); color: var(--foam); background: none; border: 0; padding: 2px 4px; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.expr-text:hover { color: #fff; }
+.expr-error { color: #fca5a5; font-size: 0.78rem; }
+.filter-expr { font: 0.8rem var(--mono); color: var(--foam); }
+.expr-editor { display: flex; flex-direction: column; gap: 6px; width: 100%; padding: 8px; border-radius: 10px; background: rgba(4, 17, 31, 0.5); border: 1px solid rgba(56, 189, 248, 0.35); }
+.expr-row { display: flex; gap: 6px; align-items: center; }
+.expr-input { width: 100%; padding: 6px 8px; font: 0.85rem var(--mono); }
+.expr-status { flex: 1 1 auto; min-width: 0; font-size: 0.78rem; }
+.expr-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.expr-ops { display: flex; flex-wrap: wrap; gap: 4px; }
+.expr-op { min-width: 28px; padding: 2px 8px; border-radius: 6px; font-size: 0.75rem; color: var(--muted); background: rgba(148, 163, 184, 0.08); border: 1px solid rgba(148, 163, 184, 0.3); cursor: pointer; }
+.expr-op b { font: 600 0.8rem var(--mono); color: var(--foam); }
+.expr-op:hover { color: #fff; border-color: rgba(56, 189, 248, 0.6); background: rgba(56, 189, 248, 0.12); }
+.expr-help { margin: 0; font-size: 0.75rem; color: var(--faint); }
+.expr-help code { color: var(--muted); }
+
 .info-tags, .detail-tags { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .detail-tags { margin-top: 8px; }
 .tag-edit { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -554,6 +586,8 @@ button.tag-pill:hover { border-color: var(--tag); background: color-mix(in srgb,
 .tag-list { padding-block: 4px; }
 .tag-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px 18px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border-soft); }
 .tag-item:last-child { border-bottom: 0; }
+.tag-item-look { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.tag-icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 84px; }
 .tag-item-name { display: flex; gap: 10px; align-items: center; min-width: 0; }
 .tag-item-name .tag-pill { flex: none; max-width: 45%; }
 .tag-item-name input { max-width: 240px; padding: 6px 10px; }
@@ -568,6 +602,11 @@ button.tag-pill:hover { border-color: var(--tag); background: color-mix(in srgb,
 #select-toggle[aria-pressed="true"] { border-color: var(--water); background: rgba(56, 189, 248, 0.18); }
 .filter-chip { gap: 6px; padding: 2px 4px 2px 5px; }
 .filter-chip .chip-x { width: 18px; height: 18px; }
+.filter-edit { display: inline-flex; align-items: center; gap: 6px; padding: 0; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+.filter-edit:hover .filter-expr { color: #fff; }
+.falls > .card-head { position: relative; }
+.expr-pop { position: absolute; top: calc(100% - 4px); left: 0; z-index: 30; width: min(460px, 100%); display: flex; flex-wrap: wrap; gap: 5px; align-items: center; padding: 10px; border-radius: 10px; background: var(--panel-solid); border: 1px solid rgba(56, 189, 248, 0.35); box-shadow: var(--shadow); }
+.expr-pop .expr-editor { padding: 0; border: 0; background: none; }
 .flow-select {
   position: sticky;
   bottom: calc(12px + env(safe-area-inset-bottom, 0px));

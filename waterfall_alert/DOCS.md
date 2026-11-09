@@ -52,6 +52,8 @@ It works like a map:
 
 - **Move around** by dragging. On a touch screen, drag with one finger.
 - **Pop it out** with the button next to **Select** to fill the window with the diagram. The button again, or <kbd>Esc</kbd> once nothing is traced or selected, puts it back.
+- **Make it taller or shorter** by dragging the gap between the Falls and **Recent events**. Double-click the gap to go back to sizing it automatically. The height is remembered.
+- **Tree or rings:** the two buttons in the top-right corner switch the layout. **Tree** is a waterfall from top to bottom. **Rings** puts the source (or your one top-level monitor) in the middle and each level on a circle around it, with the streams winding outward, so several sites spread around the circle instead of along one very wide row. A small diagram, such as a traced monitor, opens downward as a fan. Your choice is remembered.
 - **Zoom** with <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + scroll, by pinching on a trackpad or touch screen, or with the **−** and **+** buttons in the corner. Click the percentage for actual size, and the corners button to fit everything in again. A plain scroll still scrolls the page.
 - The diagram starts out fitted to the space, and fits again when you trace a monitor or change the tag filter. When you leave a traced view, the monitor you traced stays where it is and the rest of the diagram fills in around it. Your zoom and position are otherwise kept, even when you open a monitor and come back.
 
@@ -65,9 +67,21 @@ Tags are coloured labels for grouping monitors across the hierarchy, for example
 
 - **Filter:** click tags at the top of the sidebar to show only monitors with those tags, in both the list and the Falls. Monitors above a match stay visible, faded, so you can still see what the matches depend on.
 - **Any or all:** with a filter on, the two Venn-diagram buttons next to the tags choose how several tags combine. **Any** (both circles shaded, a union or full outer join) shows monitors with at least one of the tags. **All** (only the overlap shaded, an intersection or inner join) shows only monitors with every one of them. For example, pick *Cabin* and *Camera* with **All** to see just the cameras at the cabin.
+- **Advanced filter:** for anything the pills can't express, click **Advanced** and build a filter, by clicking the operator buttons and tags under the box or by typing:
+
+  | | |
+  |---|---|
+  | `Switch & Home` | both tags (`and` works too) |
+  | `Home \| Cabin` | either tag (`or` or `,` work too) |
+  | `!Retired` | not that tag (`not` works too) |
+  | `Switch & (Home \| Cabin)` | parentheses group; `&` comes before `\|`, so this is the same as `Switch & Home \| Switch & Cabin` |
+
+  Tag names aren't case-sensitive and can contain spaces (`Server room & Camera`). Put a name in double quotes if it contains one of the symbols, or is one of the words *and*, *or* or *not*. Clicking a tag or an operator inserts it at the cursor, so clicking *Wifi*, **&**, **(**, *Cabin*, **\|**, *Home* gives `Wifi & (Cabin | Home`; a bracket left open at the end is closed for you. The box says how many monitors match as you type, and **Filter** (or <kbd>Enter</kbd>) applies it. While it is on, the filter replaces the tag pills; click it to edit it, or × to clear it.
+- **From the Falls:** any filter in use also shows next to **The Falls** title, with how many monitors match. Click it (or **+ Filter** when there is none) for the same controls as the list: the tag pills with **Any**/**All**, and **Advanced** for a filter expression.
 - **Tag one monitor:** use the Tags field in its settings, or **+ Add tags** in its details panel in the Falls. When you add a tag to a monitor that has dependents, you can also add it to everything downstream (handy for tagging a whole site).
-- **Tag many:** select monitors in the Falls or the list (see above). The selection bar shows every tag: ✓ means all selected monitors have it (click to remove it), `2/5` means some do and `+` means none do (click to add it). Tick **Include downstream** to apply to everything below the selected monitors as well.
+- **Tag many:** select monitors in the Falls or the list (see above). The selection bar shows every tag: ✓ means all selected monitors have it (click to remove it), `2/5` means some do and `+` means none do (click to add it). Tick **Include downstream** to apply to everything below the selected monitors as well. It starts unticked for every new selection.
 - **Manage:** the **Tags** page lets you create, rename, recolour and delete tags. Deleting a tag only removes the label; monitors are not affected.
+- **Default icon:** on the **Tags** page, **+ Icon** gives a tag an icon (built-in, emoji, image URL or upload). Every monitor with that tag whose icon is set to *Automatic* shows it, e.g. a switch icon for everything tagged *Switch*. See [Icons](#icons).
 
 ## Icons
 
@@ -75,7 +89,7 @@ Choose a monitor's icon under **Settings → General → Icon**:
 
 | Option | |
 |---|---|
-| Automatic (default) | HTTP monitors use the website's favicon and Minecraft monitors the server icon. Groups show a folder. Other types have no icon. |
+| Automatic (default) | The icon of the monitor's tags, if one of them has one (the first in alphabetical order). Otherwise HTTP monitors use the website's favicon and Minecraft monitors the server icon, groups show a folder, and other types have no icon. |
 | Built-in | A set of simple icons for routers, servers, NAS boxes, databases, containers and more. |
 | Emoji | Any emoji. |
 | Image URL | Any image, e.g. from the [dashboard-icons](https://github.com/homarr-labs/dashboard-icons) project. |

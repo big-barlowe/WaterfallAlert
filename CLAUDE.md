@@ -28,11 +28,13 @@ waterfall_alert/             the add-on (Supervisor build context)
       js/app.js              router, polling, sidebar tree (drag/drop), views
       js/flow.js             SVG "falls" diagram, focus/lineage view, FLIP animation
       js/icons.js            built-in glyphs, iconEl() (HTML) / iconSvg() (inside the diagram)
-      js/tags.js             tag pill, colour picker, "new tag" dialog
+      js/tags.js             tag pill, colour picker, "new tag" dialog, tagIconView()
+      js/filter.js           tag filter expressions (parseTagExpr); no imports, so test/filter.test.js loads it under Node
       js/chart.js            heartbeat bar + response-time chart
       js/forms.js            monitor + notification forms
       js/util.js             api(), h()/svg()/fill() DOM helpers, formatters
     test/engine.test.js      node:test scenarios for the hierarchy logic
+    test/filter.test.js      tag filter expressions: precedence, not, quoting, error messages
     test/icons.test.js       favicon discovery and icon cache, with a fake `request`
     test/minecraft.test.js   Server List Ping against a fake server, SRV resolution
     test/move.test.js        bulk move route: ride-along subtrees, from-parent semantics, rollback
@@ -82,12 +84,13 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 - `/api/state` replaces each monitor's spec with a render descriptor from `icons.describe()`: `{kind:'image', src}`, `{kind:'builtin', name}`, `{kind:'emoji', value}` or `null`. `GET api/monitors/:id` still returns the raw spec, which is what the form edits.
 - Images are served from `api/monitors/:id/icon` with a sandboxing CSP, because SVGs come from arbitrary sites and the add-on shares Home Assistant's origin. Keep those headers. Types are sniffed from bytes (`sniffImage`), never from Content-Type.
 - Built-in glyph keys are stored in the database, so never rename one in `public/js/icons.js`. Adding one is fine.
+- **Tag icons**: `tags.icon` holds the same kind of spec (`''` = no default, never `none`); an uploaded one lives in `tags.icon_data` and is served from `api/tags/:id/icon`. A monitor whose own spec is `''` takes the first tag (name order) with an icon, ahead of favicons: `tagIconSpecs()` builds that map in `IconCache.sync()`, and `#spec(m)` is what `wanted()`/`describe()` use. A tag image URL is cached per monitor like any URL; a tag upload becomes the internal spec `tag:<id>@<version>`. So **anything that changes tag icons or which monitors carry a tag must call `iconsChanged()`** in api.js. The form's icon picker is `iconChooser()` in forms.js, shared with the tag icon dialog. Tag icons are not part of the CSV.
 
 ## Tags
 
 - `tags(id, name, color)` (names unique, case-insensitive) and `monitor_tags`. Tags have nothing to do with checking; they are display and filtering only, so tag changes call `engine.touch()`, not `reload()`.
 - `/api/state` carries `tags` (all of them) and each monitor's `tags` (ids). `POST api/tags/:id/apply {monitorIds, downstream, remove}` is the bulk path; monitor POST/PUT take `tagIds` and `tagsDownstream` (adds only the *newly added* tags to every descendant).
-- Tag filter (`ui.tagFilter` and `ui.tagMatch` = `any`|`all`, in localStorage): `filterView()` in app.js returns `match` (monitors with any/all of the selected tags) and `show` (match + all ancestors). Ancestors that don't match get `.context` and are drawn faded, in both the tree and the Falls.
+- Tag filter (`ui.tagFilter` and `ui.tagMatch` = `any`|`all`, or instead an expression in `ui.tagExpr`, all in localStorage; setting one clears the other): `filterView()` in app.js returns `match` (monitors with any/all of the selected tags) and `show` (match + all ancestors). Ancestors that don't match get `.context` and are drawn faded, in both the tree and the Falls.
 - Tag colours are set per element with the `--tag` custom property and mixed with `color-mix()` in CSS. `h()` routes `--*` style keys through `style.setProperty`.
 
 ## CSV import & export (transfer.js)
@@ -100,6 +103,7 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 
 ## Falls diagram (flow.js)
 
+- Two layouts, `treeLayout` and `ringLayout`, built on the same `structure()` (levels, primary parents, leaf slots). Each returns `{pos, source, width, height, stream(from, to, seed)}`, plus `centre` for rings. Rings map slots to angles (a downward fan until there are enough to fill a circle) and push each ring out until its cards clear everything inside; `river()` draws streams in polar space with a meander, trimmed at the card edges. `setLayout()` / the corner toggle switch it, app.js keeps it in `ui.fallsLayout` (localStorage), and the mode is part of both the topology key and the fit key.
 - `render(monitors, focusId, {selected, selectMode})`: with a focus, only `lineage()` (ancestors + descendants) is laid out. The structure is rebuilt only when the topology key changes (ids, names, edges, icons, tags, focus); `#paint` updates status, selection and `.context` classes in place so animations don't restart.
 - Monitors passed in carry `tagList` (`[{name, color}]`) and `context`. When any shown node has tags, every node grows to `TAGGED_H` for a row of pills (widths measured on a canvas; overflow becomes `+N`).
 - It is a map: the svg fills `.flow-map` and everything sits in `g.viewport`, positioned with a CSS transform from `view = {k, x, y, h, key, auto}`. app.js owns that object (`ui.flowView`) so zoom/position survive navigation. While `auto`, `#fit()` sizes the box and fits the diagram; it re-fits whenever `key` (focus + shown ids) changes, except when leaving a trace: then the previously focused node (`view.focus`) keeps its screen position and zoom. Pan/zoom set `auto = false`. Pointer coordinates go through `#point()` (manual inverse of the view), and the FLIP deltas are divided by `k`.
@@ -112,7 +116,7 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 
 ## Conventions
 
-- **Layout.** `.layout` is a 3-column grid: list (`--side-w`, set by the `#side-resize` handle and kept in localStorage), handle, main. `.side`/`.main` have explicit `grid-column`s so nothing reflows when one is popped out. Pop-out (`setPopout('side'|'falls')` in app.js) adds `popout-*` body classes that make the panel `position: fixed`; it needs `align-self: stretch`, because Chrome applies `.side`'s `align-self: start` to fixed boxes and would size it to its content. `FlowView.setExpanded()` makes the map fill its box instead of setting its own height. `route()` closes any pop-out.
+- **Layout.** `.layout` is a 3-column grid: list (`--side-w`, set by the `#side-resize` handle and kept in localStorage), handle, main. `.side`/`.main` have explicit `grid-column`s so nothing reflows when one is popped out. Pop-out (`setPopout('side'|'falls')` in app.js) adds `popout-*` body classes that make the panel `position: fixed`; it needs `align-self: stretch`, because Chrome applies `.side`'s `align-self: start` to fixed boxes and would size it to its content. `FlowView.setExpanded()` makes the map fill its box instead of setting its own height. `route()` closes any pop-out. The `.falls-resize` handle between the Falls and Recent events sets `FlowView.setHeight()` (`ui.fallsHeight`, localStorage; null = automatic).
 - **Two run modes.** As an HA add-on (`isAddon`: `SUPERVISOR_TOKEN` is set), ingress handles auth and `allowed()` in server.js limits direct port access. Standalone (Docker, `compose.yaml`) there is no auth at all, and HA features need `HA_URL`/`HA_TOKEN`. UI text about HA-specific things should check `api/info` → `addon`.
 - **No build step, no framework.** Frontend is ES modules served as-is. Keep it that way.
 - **All frontend URLs are relative** (`api/...`, `css/...`, hash routes). HA ingress serves the app under `/api/hassio_ingress/<token>/`, so a leading `/` breaks it.

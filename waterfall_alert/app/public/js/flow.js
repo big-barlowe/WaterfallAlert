@@ -16,6 +16,7 @@ const TAG_FONT = '600 9px ui-sans-serif, system-ui, -apple-system, "Segoe UI", R
 const ZOOM = { min: 0.2, max: 2.5, step: 1.25 };
 const FIT_MIN = 0.6; // fitting never shrinks below this; zoom out for the overview
 const VIEW_MIN_H = 320;
+const MAP_H = { min: 200, max: 4000 }; // dragged heights
 const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -43,10 +44,12 @@ export function lineage(monitors, id) {
   return { up: walk('parents'), down: walk('children') };
 }
 
-// Layered "waterfall" layout: roots at the top, every child strictly below
-// all of its parents. Each node hangs under its deepest parent (its
-// "primary" parent) for a tidy tree; extra parents get secondary streams.
-function layout(monitors, nodeH) {
+// What both layouts share: each node's level (one below its deepest
+// parent), its "primary" parent (that deepest one, so the hierarchy reads as
+// a tidy tree; extra parents get secondary streams), and its slot: leaves
+// numbered left to right, a parent in the middle of its children, a little
+// space between the trees under different roots.
+function structure(monitors) {
   const byId = new Map(monitors.map((m) => [m.id, m]));
   const level = new Map();
   const levelOf = (id) => {
@@ -87,19 +90,166 @@ function layout(monitors, nodeH) {
     place(r);
   });
 
+  return { level, roots, slot, slots: Math.max(1, next) };
+}
+
+// The "waterfall": roots at the top, every child strictly below all of its
+// parents, the source above the roots.
+function treeLayout(monitors, nodeH) {
+  const { level, roots, slot, slots } = structure(monitors);
   const pos = new Map();
   for (const m of monitors) {
     pos.set(m.id, { x: PAD + slot.get(m.id) * SLOT_W, y: PAD + SOURCE_H + level.get(m.id) * LEVEL_H });
   }
   const maxLevel = Math.max(0, ...level.values());
+  const xs = roots.map((r) => pos.get(r).x);
+  const source = { x: (Math.min(...xs) + Math.max(...xs)) / 2 + NODE_W / 2, y: PAD + 14 };
   return {
     pos,
-    roots,
-    primary,
-    width: PAD * 2 + Math.max(1, next) * SLOT_W - (SLOT_W - NODE_W),
+    source,
+    width: PAD * 2 + slots * SLOT_W - (SLOT_W - NODE_W),
     height: PAD * 2 + SOURCE_H + maxLevel * LEVEL_H + nodeH,
+    stream: (from, to) => (from
+      ? curve(from.x + NODE_W / 2, from.y + nodeH, to.x + NODE_W / 2, to.y)
+      : curve(source.x, source.y + 10, to.x + NODE_W / 2, to.y)),
   };
 }
+
+// Rings: the source (or a lone root) in the middle and each level on a ring
+// around it, so several sites spread around a circle instead of along one
+// very wide row (or a fan, while there are too few to fill a circle). Every subtree keeps its own wedge, in the tree's order. A
+// ring is pushed out only as far as it takes for its cards to clear each
+// other and everything inside it.
+const RING = { min: NODE_H + 44, step: 12, margin: 12, perSlot: (40 * Math.PI) / 180 };
+
+function ringLayout(monitors, nodeH) {
+  const { level, roots, slot, slots } = structure(monitors);
+  const hub = roots.length === 1 ? roots[0] : null;
+  const ring = (id) => (id === hub ? 0 : level.get(id) + (hub == null ? 1 : 0));
+  // A small diagram opens downward as a fan (a trace, say); a big one goes
+  // all the way round.
+  const span = Math.min(2 * Math.PI, slots * RING.perSlot);
+  const angle = (id) => Math.PI / 2 + span * ((slot.get(id) + 0.5) / slots - 0.5);
+  const rings = [];
+  for (const m of monitors) (rings[ring(m.id)] ??= []).push(m.id);
+
+  const W2 = NODE_W / 2 + RING.margin;
+  const H2 = nodeH / 2 + RING.margin;
+  const polar = new Map();
+  const placed = []; // centres of the cards on inner rings
+  const clash = (a, b) => Math.abs(a.x - b.x) < W2 * 2 && Math.abs(a.y - b.y) < H2 * 2;
+  let r = 0;
+  rings.forEach((ids = [], i) => {
+    if (!ids.length) return;
+    if (i > 0) {
+      r += RING.min;
+      const at = (radius) => ids.map((id) => ({ x: radius * Math.cos(angle(id)), y: radius * Math.sin(angle(id)) }));
+      for (let guard = 0; guard < 400; guard++) {
+        const cs = at(r);
+        const bad = cs.some((c, j) => placed.some((p) => clash(c, p)) || cs.some((d, k) => k > j && clash(c, d)));
+        if (!bad) break;
+        r += RING.step;
+      }
+    }
+    for (const id of ids) {
+      const a = i ? angle(id) : 0;
+      const radius = i ? r : 0;
+      polar.set(id, { r: radius, a });
+      placed.push({ x: radius * Math.cos(a), y: radius * Math.sin(a) });
+    }
+  });
+
+  // Centres, then shifted so everything (and the source) sits inside the
+  // padding.
+  const centre = new Map([...polar].map(([id, p]) => [id, { x: p.r * Math.cos(p.a), y: p.r * Math.sin(p.a) }]));
+  const src = hub != null ? { x: 0, y: -nodeH / 2 - 40 } : { x: 0, y: 0 };
+  const cs = [...centre.values()];
+  const minX = Math.min(src.x - 12, ...cs.map((c) => c.x - NODE_W / 2));
+  const minY = Math.min(src.y - 12, ...cs.map((c) => c.y - nodeH / 2));
+  const maxX = Math.max(src.x + 12, ...cs.map((c) => c.x + NODE_W / 2));
+  const maxY = Math.max(src.y + 12, ...cs.map((c) => c.y + nodeH / 2));
+  const dx = PAD - minX;
+  const dy = PAD - minY;
+  const pos = new Map([...centre].map(([id, c]) => [id, { x: c.x - NODE_W / 2 + dx, y: c.y - nodeH / 2 + dy }]));
+  const source = { x: src.x + dx, y: src.y + dy };
+  const middle = { x: dx, y: dy };
+  const box = (p) => p && { x: p.x, y: p.y, w: NODE_W, h: nodeH };
+  return {
+    pos,
+    source,
+    centre: hub != null ? { x: pos.get(hub).x + NODE_W / 2, y: pos.get(hub).y + nodeH / 2 } : middle,
+    width: maxX - minX + PAD * 2,
+    height: maxY - minY + PAD * 2,
+    stream: (from, to, seed) => river(middle, from ? { x: from.x + NODE_W / 2, y: from.y + nodeH / 2 } : source, { x: to.x + NODE_W / 2, y: to.y + nodeH / 2 }, box(from), box(to), seed),
+  };
+}
+
+// A stream that winds outward around the middle (following the angle and
+// the radius at the same time, so it bends with the rings) with a gentle
+// meander, trimmed to start and end at the edges of the two cards.
+function river(mid, a, b, fromBox, toBox, seed) {
+  const pa = { r: Math.hypot(a.x - mid.x, a.y - mid.y), t: Math.atan2(a.y - mid.y, a.x - mid.x) };
+  const pb = { r: Math.hypot(b.x - mid.x, b.y - mid.y), t: Math.atan2(b.y - mid.y, b.x - mid.x) };
+  if (pa.r < 1) pa.t = pb.t;
+  if (pb.r < 1) pb.t = pa.t;
+  let dt = pb.t - pa.t;
+  while (dt > Math.PI) dt -= 2 * Math.PI;
+  while (dt < -Math.PI) dt += 2 * Math.PI;
+  const along = (u) => {
+    const r = pa.r + (pb.r - pa.r) * u;
+    const t = pa.t + dt * u;
+    return { x: mid.x + r * Math.cos(t), y: mid.y + r * Math.sin(t) };
+  };
+  // rough length, for the number of points and the size of the bends
+  let len = 0;
+  for (let i = 1, q = along(0); i <= 16; i++) {
+    const p = along(i / 16);
+    len += Math.hypot(p.x - q.x, p.y - q.y);
+    q = p;
+  }
+  const n = Math.max(8, Math.ceil(len / 8));
+  const amp = Math.min(16, len * 0.05) * (seed % 2 ? 1 : -1);
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const u = i / n;
+    const p = along(u);
+    const q = along(Math.min(1, u + 0.01));
+    const o = along(Math.max(0, u - 0.01));
+    const tx = q.x - o.x;
+    const ty = q.y - o.y;
+    const tl = Math.hypot(tx, ty) || 1;
+    const off = amp * Math.sin(2 * Math.PI * u) * Math.sin(Math.PI * u);
+    pts.push({ x: p.x - (ty / tl) * off, y: p.y + (tx / tl) * off });
+  }
+  const inside = (p, bx) => bx && p.x > bx.x - 1 && p.x < bx.x + bx.w + 1 && p.y > bx.y - 1 && p.y < bx.y + bx.h + 1;
+  let i0 = 0;
+  while (i0 < pts.length - 2 && inside(pts[i0 + 1], fromBox)) i0++;
+  let i1 = pts.length - 1;
+  while (i1 > i0 + 1 && inside(pts[i1 - 1], toBox)) i1--;
+  const kept = pts.slice(i0, i1 + 1);
+  if (inside(kept[0], fromBox)) kept[0] = edgePoint(kept[0], kept[1], fromBox);
+  if (inside(kept[kept.length - 1], toBox)) kept[kept.length - 1] = edgePoint(kept[kept.length - 1], kept[kept.length - 2], toBox);
+  return kept.map((p, i) => `${i ? 'L' : 'M'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join('');
+}
+
+// Where the segment from `p` (inside the box) to `q` (outside) leaves it.
+function edgePoint(p, q, b) {
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 12; i++) {
+    const m = (lo + hi) / 2;
+    const x = p.x + (q.x - p.x) * m;
+    const y = p.y + (q.y - p.y) * m;
+    if (x > b.x && x < b.x + b.w && y > b.y && y < b.y + b.h) lo = m;
+    else hi = m;
+  }
+  return { x: p.x + (q.x - p.x) * hi, y: p.y + (q.y - p.y) * hi };
+}
+
+export const LAYOUTS = {
+  tree: { label: 'Tree', title: 'Tree: a waterfall, top to bottom' },
+  rings: { label: 'Rings', title: 'Rings: levels in circles around the source, streams winding outward' },
+};
 
 // What a parent sends downstream: flowing water, a dry bed, or still water.
 function streamState(m) {
@@ -118,6 +268,21 @@ function curve(x1, y1, x2, y2) {
 const glowFilter = (id, region) => svg('filter', { id, ...region },
   svg('feGaussianBlur', { stdDeviation: 3.2, result: 'b' }),
   svg('feMerge', {}, svg('feMergeNode', { in: 'b' }), svg('feMergeNode', { in: 'SourceGraphic' })));
+
+// Toggle icons: a little tree, and a node with others around it on a ring.
+function layoutIcon(mode) {
+  const icon = (...kids) => svg('svg', { class: 'layout-icon', viewBox: '0 0 18 18', width: 16, height: 16, 'aria-hidden': 'true' }, ...kids);
+  if (mode === 'tree') {
+    return icon(
+      svg('path', { class: 'li-line', d: 'M9 5V8.5M3.5 13V10.5Q3.5 8.5 5.5 8.5H12.5Q14.5 8.5 14.5 10.5V13M9 8.5V13' }),
+      svg('circle', { class: 'li-dot', cx: 9, cy: 3.2, r: 2.2 }),
+      ...[3.5, 9, 14.5].map((cx) => svg('circle', { class: 'li-dot', cx, cy: 14.8, r: 2.2 })));
+  }
+  return icon(
+    svg('circle', { class: 'li-line', cx: 9, cy: 9, r: 6.2 }),
+    svg('circle', { class: 'li-dot', cx: 9, cy: 9, r: 2.4 }),
+    ...[-90, 30, 150].map((d) => svg('circle', { class: 'li-dot', cx: 9 + 6.2 * Math.cos((d * Math.PI) / 180), cy: 9 + 6.2 * Math.sin((d * Math.PI) / 180), r: 2 })));
+}
 
 const truncate = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const iconKey = (i) => (i ? `${i.kind}:${i.src ?? i.name ?? i.value}` : '');
@@ -183,9 +348,13 @@ function subline(m) {
 // `view` ({k, x, y, h, key, auto}) holds the zoom and position; pass the
 // same object to a new FlowView to keep them. While `auto`, the view fits
 // the diagram, and it fits again whenever the focus or the set of shown
-// monitors changes.
+// monitors changes. `height` is a height the user dragged the map to (null =
+// sized to the diagram).
 export class FlowView {
-  constructor(container, { onSelect, onExpand, onClear, onToggle, onMarquee, view }) {
+  constructor(container, { onSelect, onExpand, onClear, onToggle, onMarquee, onLayout, view, height = null, layout = 'tree' }) {
+    this.userH = height;
+    this.mode = LAYOUTS[layout] ? layout : 'tree';
+    this.onLayout = onLayout;
     this.container = container;
     this.onSelect = onSelect;
     this.onExpand = onExpand;
@@ -202,7 +371,17 @@ export class FlowView {
 
     const button = (label, title, onclick, cls = '') => h('button', { type: 'button', class: `map-btn${cls}`, title, 'aria-label': title, onclick }, label);
     this.zoomLabel = button('100%', 'Actual size', () => this.#zoomBy(1 / this.view.k), ' map-zoom');
+    this.layoutBtns = Object.entries(LAYOUTS).map(([mode, { title }]) => {
+      const b = button(layoutIcon(mode), title, () => {
+        this.setLayout(mode);
+        this.onLayout?.(mode);
+      }, ' map-layout');
+      b.dataset.mode = mode;
+      b.setAttribute('aria-pressed', String(mode === this.mode));
+      return b;
+    });
     this.controls = h('div', { class: 'map-controls' },
+      h('span', { class: 'map-layouts', role: 'group', 'aria-label': 'Layout' }, this.layoutBtns),
       button('−', 'Zoom out', () => this.#zoomBy(1 / ZOOM.step)),
       this.zoomLabel,
       button('+', 'Zoom in', () => this.#zoomBy(ZOOM.step)),
@@ -228,6 +407,22 @@ export class FlowView {
     this.resizer.observe(container);
   }
 
+  // A height chosen by dragging (null: back to sizing itself to the diagram).
+  // A fitted view re-fits to the new size; otherwise the middle stays put.
+  setHeight(px) {
+    const v = this.view;
+    const h0 = v.h;
+    this.userH = px == null ? null : Math.round(clamp(px, MAP_H.min, MAP_H.max));
+    if (!this.svgEl || v.k == null || this.expanded) return this.userH;
+    if (v.auto) this.#fit(false);
+    else {
+      v.h = this.#height(v.k);
+      v.y += (v.h - h0) / 2;
+      this.#apply(false);
+    }
+    return this.userH;
+  }
+
   // Popped out, the map fills its box (sized by CSS) instead of sizing it.
   // The middle of what was on screen stays in the middle.
   setExpanded(on) {
@@ -244,10 +439,19 @@ export class FlowView {
     this.#apply(false);
   }
 
+  // 'tree' or 'rings'. The nodes glide to their new places.
+  setLayout(mode) {
+    if (!LAYOUTS[mode] || mode === this.mode) return;
+    this.mode = mode;
+    for (const b of this.layoutBtns) b.setAttribute('aria-pressed', String(b.dataset.mode === mode));
+    if (this.last) this.render(...this.last);
+  }
+
   // With `focusId`, only that monitor's upstream and downstream are drawn.
   // Monitors may carry `tagList` ([{name, color}]) and `context` (shown only
   // because something below them matches the filter; drawn faded).
   render(monitors, focusId = null, { selected = new Set(), selectMode = false } = {}) {
+    this.last = [monitors, focusId, { selected, selectMode }];
     this.selected = selected;
     this.selectMode = selectMode;
     if (!monitors.length) {
@@ -266,7 +470,7 @@ export class FlowView {
       const keep = new Set([focus, ...rel.up.keys(), ...rel.down.keys()]);
       shown = monitors.filter((m) => keep.has(m.id)).map((m) => ({ ...m, parents: m.parents.filter((p) => keep.has(p)), allParents: m.parents }));
     }
-    const key = JSON.stringify([focus, shown.map((m) => [m.id, m.name, m.parents, iconKey(m.icon), m.tagList?.map((t) => t.name + t.color)])]);
+    const key = JSON.stringify([this.mode, focus, shown.map((m) => [m.id, m.name, m.parents, iconKey(m.icon), m.tagList?.map((t) => t.name + t.color)])]);
     if (key !== this.topology) this.#build(shown, key, focus, rel);
     this.#paint(monitors);
   }
@@ -277,11 +481,11 @@ export class FlowView {
 
     this.topology = key;
     const nodeH = monitors.some((m) => m.tagList?.length) ? TAGGED_H : NODE_H;
-    const { pos, roots, width, height } = layout(monitors, nodeH);
+    const L = (this.mode === 'rings' ? ringLayout : treeLayout)(monitors, nodeH);
+    const { pos, width, height } = L;
     const oldBoxes = this.boxes;
     this.boxes = new Map([...pos].map(([id, p]) => [id, { ...p, w: NODE_W, h: nodeH }]));
-    const srcX = (Math.min(...roots.map((r) => pos.get(r).x)) + Math.max(...roots.map((r) => pos.get(r).x))) / 2 + NODE_W / 2;
-    const srcY = PAD + 14;
+    const { x: srcX, y: srcY } = L.source;
 
     const edges = svg('g', { class: 'edges' });
     const nodes = svg('g', { class: 'nodes' });
@@ -297,16 +501,13 @@ export class FlowView {
       this.edgeEls.push({ parentId, childId, g });
     };
 
-    for (const r of roots) {
-      const p = pos.get(r);
-      addEdge(null, r, curve(srcX, srcY + 10, p.x + NODE_W / 2, p.y));
-    }
     for (const m of monitors) {
       const c = pos.get(m.id);
+      if (!m.parents.length) addEdge(null, m.id, L.stream(null, c, m.id));
       for (const parentId of m.parents) {
         const p = pos.get(parentId);
         if (!p) continue;
-        addEdge(parentId, m.id, curve(p.x + NODE_W / 2, p.y + nodeH, c.x + NODE_W / 2, c.y));
+        addEdge(parentId, m.id, L.stream(p, c, m.id + parentId));
       }
     }
 
@@ -384,7 +585,7 @@ export class FlowView {
 
     this.viewEl = svg('g', { class: 'viewport' }, edges, nodes, source);
     const root = svg('svg', {
-      class: `flow-svg${focus != null ? ' focusing' : ''}`,
+      class: `flow-svg layout-${this.mode}${focus != null ? ' focusing' : ''}`,
       role: 'group',
       'aria-label': 'Monitor hierarchy flow diagram. Drag to move around; hold Ctrl or ⌘ and scroll, or pinch, to zoom.',
       onclick: (e) => {
@@ -413,8 +614,8 @@ export class FlowView {
     this.gesture = null;
     this.pointers.clear();
 
-    this.content = { width, height, anchor: focus != null ? { x: pos.get(focus).x + NODE_W / 2, y: pos.get(focus).y + nodeH / 2 } : null };
-    const fitKey = JSON.stringify([focus, monitors.map((m) => m.id)]);
+    this.content = { width, height, anchor: focus != null ? { x: pos.get(focus).x + NODE_W / 2, y: pos.get(focus).y + nodeH / 2 } : L.centre ?? null };
+    const fitKey = JSON.stringify([this.mode, focus, monitors.map((m) => m.id)]);
     const v = this.view;
     const keyChanged = v.key !== fitKey || v.k == null;
     // Leaving a trace: the monitor that was traced stays exactly where it is
@@ -437,12 +638,14 @@ export class FlowView {
 
   #maxHeight() {
     if (this.expanded) return this.container.clientHeight;
+    if (this.userH) return this.userH;
     return Math.max(VIEW_MIN_H, Math.round(window.innerHeight * (this.container.clientWidth < 600 ? 0.6 : 0.72)));
   }
 
   // The map's height: the diagram at zoom `k`, within limits.
   #height(k) {
     if (this.expanded) return this.container.clientHeight;
+    if (this.userH) return this.userH;
     return clamp(Math.ceil(this.content.height * k), VIEW_MIN_H, this.#maxHeight());
   }
 

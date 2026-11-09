@@ -16,14 +16,28 @@ const MAX_PAGE_BYTES = 512 * 1024;
 //   'emoji:<text>'   an emoji
 //   'url:<url>'      an image the server fetches and caches
 //   'upload'         an image uploaded through the UI
+// A tag's icon uses the same specs, except 'none' ('' = no default icon).
+// Internally, a monitor showing a tag's uploaded image has 'tag:<id>@<version>'.
 export function parseIconSpec(spec) {
   const s = String(spec ?? '');
   if (s === 'none' || s === 'upload') return { kind: s };
   const i = s.indexOf(':');
   const kind = s.slice(0, i);
   const value = s.slice(i + 1);
-  if (i > 0 && value && ['builtin', 'emoji', 'url'].includes(kind)) return { kind, value };
+  if (i > 0 && value && ['builtin', 'emoji', 'url', 'tag'].includes(kind)) return { kind, value };
   return { kind: 'auto' };
+}
+
+// Monitor id -> the icon spec it gets from its tags: a monitor left on
+// automatic takes the icon of its first tag (in name order) that has one.
+export function tagIconSpecs(tags, tagMap) {
+  const byId = new Map(tags.filter((t) => t.icon).map((t) => [t.id, t]));
+  const out = new Map();
+  for (const [monitorId, tagIds] of tagMap) {
+    const t = tagIds.map((id) => byId.get(id)).find(Boolean);
+    if (t) out.set(monitorId, t.icon === 'upload' ? `tag:${t.id}@${t.iconV}` : t.icon);
+  }
+  return out;
 }
 
 // Normalizes a spec from the API, throwing on anything malformed.
@@ -33,6 +47,7 @@ export function validateIconSpec(spec) {
   const { kind, value } = parseIconSpec(s);
   if (kind === 'builtin' && /^[a-z0-9-]{1,32}$/.test(value)) return s;
   if (kind === 'emoji' && value.trim() && value.length <= 16) return `emoji:${value.trim()}`;
+  if (kind === 'tag') throw new Error('Unknown icon setting');
   if (kind === 'url') {
     let u;
     try {
@@ -118,13 +133,19 @@ export class IconCache {
     this.now = now;
     this.meta = new Map(store.listIconMeta().map((r) => [r.monitorId, r]));
     this.monitors = new Map();
+    this.tagIcons = new Map();
     this.queue = new Set();
     this.running = null;
   }
 
+  // The monitor's own icon, or else the one its tags give it.
+  #spec(m) {
+    return m.icon || this.tagIcons.get(m.id) || '';
+  }
+
   // What the cache should hold for a monitor: a source key, or null.
   wanted(m) {
-    const spec = parseIconSpec(m.icon);
+    const spec = parseIconSpec(this.#spec(m));
     if (spec.kind === 'auto') {
       if (m.type === 'http' && m.config?.url) return `favicon:${m.config.url}`;
       if (m.type === 'minecraft' && m.config?.host) return `minecraft:${m.config.host}:${m.config.port ?? ''}`;
@@ -141,9 +162,10 @@ export class IconCache {
   }
 
   // Drop images nothing uses any more and queue fetches for missing, stale or
-  // `force`d ones.
+  // `force`d ones. Call it after any change to monitors, tags or their icons.
   sync(monitors, force = []) {
     this.monitors = new Map(monitors.map((m) => [m.id, m]));
+    this.tagIcons = tagIconSpecs(this.store.listTags(), this.store.monitorTagMap());
     let changed = false;
     for (const id of this.meta.keys()) if (!this.monitors.has(id)) this.meta.delete(id); // ON DELETE CASCADE
     for (const m of monitors) {
@@ -175,10 +197,14 @@ export class IconCache {
 
   // What the UI renders, or null for no icon.
   describe(m) {
-    const spec = parseIconSpec(m.icon);
+    const spec = parseIconSpec(this.#spec(m));
     if (spec.kind === 'none') return null;
     if (spec.kind === 'builtin') return { kind: 'builtin', name: spec.value };
     if (spec.kind === 'emoji') return { kind: 'emoji', value: spec.value };
+    if (spec.kind === 'tag') {
+      const [id, v] = spec.value.split('@');
+      return { kind: 'image', src: `api/tags/${id}/icon?v=${v}` };
+    }
     const meta = this.meta.get(m.id);
     if (meta?.hasData && meta.source === this.wanted(m)) {
       return { kind: 'image', src: `api/monitors/${m.id}/icon?v=${meta.updatedAt}` };

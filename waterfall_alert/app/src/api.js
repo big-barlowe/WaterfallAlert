@@ -11,6 +11,14 @@ export { HttpError };
 const VERSION = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 // A non-JSON response (icon images).
+// Icons may be SVGs from anywhere, and the add-on shares Home Assistant's
+// origin, so they are served sandboxed.
+const ICON_HEADERS = {
+  'Cache-Control': 'private, max-age=604800',
+  'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+  'X-Content-Type-Options': 'nosniff',
+};
+
 export class RawResponse {
   constructor(type, body, headers = {}) {
     this.type = type;
@@ -241,11 +249,7 @@ export function createApi({ store, engine, icons }) {
   route('GET', '/api/monitors/:id/icon', ({ params }) => {
     const icon = store.getIcon(monitorOr404(params.id).id);
     if (!icon) throw new HttpError(404, 'No icon');
-    return new RawResponse(icon.mime, icon.data, {
-      'Cache-Control': 'private, max-age=604800',
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
-      'X-Content-Type-Options': 'nosniff',
-    });
+    return new RawResponse(icon.mime, icon.data, ICON_HEADERS);
   });
 
   route('GET', '/api/monitors/:id/events', ({ params }) => store.importantHeartbeats(monitorOr404(params.id).id, 50));
@@ -276,10 +280,23 @@ export function createApi({ store, engine, icons }) {
     return store.listTags().map((t) => ({ ...t, count: counts.get(t.id) ?? 0 }));
   });
 
+  // A tag's uploaded icon arrives as a data URL in `iconData`, as for monitors.
+  const tagIconUpload = (body, t, existing) => {
+    if (t.icon !== 'upload') return null;
+    if (body.iconData) return badRequest(() => decodeDataUrl(body.iconData));
+    if (!existing || !store.getTagIcon(existing.id)) throw new HttpError(400, 'Choose an image to upload for the icon');
+    return null;
+  };
+
   route('POST', '/api/tags', ({ body }) => {
     const t = normalizeTag(body);
     uniqueTagName(t.name, null);
-    const id = store.createTag(t);
+    const upload = tagIconUpload(body, t, null);
+    const id = store.tx(() => {
+      const newId = store.createTag(t);
+      if (upload) store.setTagIcon(newId, upload);
+      return newId;
+    });
     engine.touch();
     return store.getTag(id);
   });
@@ -288,15 +305,27 @@ export function createApi({ store, engine, icons }) {
     const existing = tagOr404(params.id);
     const t = normalizeTag(body, existing);
     uniqueTagName(t.name, existing.id);
-    store.updateTag(existing.id, t);
+    const upload = tagIconUpload(body, t, existing);
+    store.tx(() => {
+      store.updateTag(existing.id, t);
+      if (upload) store.setTagIcon(existing.id, upload);
+    });
     engine.touch();
+    iconsChanged(null);
     return store.getTag(existing.id);
   });
 
   route('DELETE', '/api/tags/:id', ({ params }) => {
     store.deleteTag(tagOr404(params.id).id);
     engine.touch();
+    iconsChanged(null);
     return { ok: true };
+  });
+
+  route('GET', '/api/tags/:id/icon', ({ params }) => {
+    const icon = store.getTagIcon(tagOr404(params.id).id);
+    if (!icon) throw new HttpError(404, 'No icon');
+    return new RawResponse(icon.mime, icon.data, ICON_HEADERS);
   });
 
   // Add (or with remove=true, take off) a tag on several monitors at once,
@@ -311,7 +340,10 @@ export function createApi({ store, engine, icons }) {
     store.tx(() => {
       for (const id of targets) changed += body.remove ? store.untagMonitor(id, tag.id) : store.tagMonitor(id, tag.id);
     });
-    if (changed) engine.touch();
+    if (changed) {
+      engine.touch();
+      iconsChanged(null);
+    }
     return { ok: true, changed, monitors: targets.size };
   });
 

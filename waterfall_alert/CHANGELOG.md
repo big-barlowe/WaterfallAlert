@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0
+
+- **Tag icons.** Give a tag a default icon on the **Tags** page (built-in, emoji, image URL or upload). Monitors with that tag that are left on the *Automatic* icon show it, e.g. a switch icon for everything tagged *Switch*. A monitor's own icon still wins.
+- **Advanced tag filter.** **Advanced** next to the tag pills takes a filter like `Switch & (Home | Cabin)` or `Camera & !Retired`, with `&`/and, `|`/or, `!`/not and parentheses. Type it, or click the operator buttons and tags to build it. It checks as you type and shows how many monitors match. **+ Filter** next to the Falls title opens the same filter controls as the list (tag pills, with **Advanced** for an expression), and clicking a filter shown there edits it.
+- **Rings layout for the Falls.** The buttons in the diagram's top-right corner switch between the tree and a concentric layout: levels on circles around the source, streams winding outward like rivers. Wide, multi-site setups fit on screen far better. The choice is remembered.
+- **Resize the Falls.** Drag the gap between the Falls and **Recent events** to make the diagram taller or shorter; double-click it for automatic again.
+- **Include downstream** in the Falls selection bar now starts unticked for every new selection, instead of remembering the last choice.
+
 ## 0.7.0
 
 - **Resizable monitor list.** Drag the gap between the list and the page to make it wider or narrower (double-click to reset). The width is remembered.

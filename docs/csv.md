@@ -114,7 +114,7 @@ Numbers outside a range are clamped to it, e.g. an interval of `5` becomes `10`.
 
 | Value | Meaning |
 |---|---|
-| *(blank)* | Automatic: the site's favicon for HTTP, the server icon for Minecraft, a folder for groups, nothing for the rest. |
+| *(blank)* | Automatic: the icon of the monitor's tags if one has one, else the site's favicon for HTTP, the server icon for Minecraft, a folder for groups, nothing for the rest. Tag icons themselves are not in the CSV file; set them on the Tags page. |
 | `none` | No icon. |
 | `builtin:<name>` | A built-in icon: `globe`, `cloud`, `router`, `switch`, `wifi`, `server`, `nas`, `database`, `container`, `cpu`, `shield`, `lock`, `home`, `bulb`, `camera`, `sensor`, `bolt`, `power`, `tv`, `speaker`, `phone`, `gamepad`, `printer`, `mail`, `drop`, `folder`. |
 | `emoji:<emoji>` | Any emoji, e.g. `emoji:🖥️`. |

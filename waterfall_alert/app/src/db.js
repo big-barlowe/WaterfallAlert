@@ -105,7 +105,17 @@ const MIGRATIONS = [
   );
   CREATE INDEX monitor_tags_tag ON monitor_tags(tag_id);
   `,
+  // v4: a tag can give the monitors carrying it a default icon. `icon` is a
+  // spec as for monitors; an uploaded image is kept with the tag.
+  `
+  ALTER TABLE tags ADD COLUMN icon TEXT NOT NULL DEFAULT '';
+  ALTER TABLE tags ADD COLUMN icon_mime TEXT;
+  ALTER TABLE tags ADD COLUMN icon_data BLOB;
+  ALTER TABLE tags ADD COLUMN icon_updated_at INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
+
+const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
 
 export const DEFAULT_SETTINGS = {
   retentionDays: 90,
@@ -316,25 +326,37 @@ export class Store {
   // ---- tags ---------------------------------------------------------------
 
   listTags() {
-    return this.q('SELECT id, name, color FROM tags ORDER BY name COLLATE NOCASE').all().map((t) => ({ ...t }));
+    return this.q(`SELECT ${TAG_COLS} FROM tags ORDER BY name COLLATE NOCASE`).all().map((t) => ({ ...t }));
   }
 
   getTag(id) {
-    const t = this.q('SELECT id, name, color FROM tags WHERE id = ?').get(id);
+    const t = this.q(`SELECT ${TAG_COLS} FROM tags WHERE id = ?`).get(id);
     return t ? { ...t } : null;
   }
 
   findTagByName(name) {
-    const t = this.q('SELECT id, name, color FROM tags WHERE name = ? COLLATE NOCASE').get(name);
+    const t = this.q(`SELECT ${TAG_COLS} FROM tags WHERE name = ? COLLATE NOCASE`).get(name);
     return t ? { ...t } : null;
   }
 
   createTag(t) {
-    return Number(this.q('INSERT INTO tags (name, color) VALUES (?, ?)').run(t.name, t.color).lastInsertRowid);
+    return Number(this.q('INSERT INTO tags (name, color, icon) VALUES (?, ?, ?)').run(t.name, t.color, t.icon ?? '').lastInsertRowid);
   }
 
+  // An uploaded image is dropped once the icon is no longer 'upload'.
   updateTag(id, t) {
-    this.q('UPDATE tags SET name = ?, color = ? WHERE id = ?').run(t.name, t.color, id);
+    this.q(`UPDATE tags SET name = ?, color = ?, icon = ?,
+            icon_mime = CASE WHEN ? = 'upload' THEN icon_mime END,
+            icon_data = CASE WHEN ? = 'upload' THEN icon_data END
+            WHERE id = ?`).run(t.name, t.color, t.icon ?? '', t.icon ?? '', t.icon ?? '', id);
+  }
+
+  setTagIcon(id, { mime, data }, now = Date.now()) {
+    this.q('UPDATE tags SET icon_mime = ?, icon_data = ?, icon_updated_at = ? WHERE id = ?').run(mime, data, now, id);
+  }
+
+  getTagIcon(id) {
+    return this.q('SELECT icon_mime AS mime, icon_data AS data FROM tags WHERE id = ? AND icon_data IS NOT NULL').get(id) ?? null;
   }
 
   deleteTag(id) {
