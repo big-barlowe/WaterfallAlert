@@ -7,7 +7,7 @@ import { renderNotifications } from './notifications.js';
 import { tagPill, colorPicker, newTagDialog, matchIcon, matchToggle, tagExprEditor, TAG_MATCH, tagIconView } from './tags.js';
 import { parseTagExpr, exprName } from './filter.js';
 import { snmpSnapshot, snmpSummary, snmpSections, renderSnmpBrowser, mibLibraryCard } from './snmp.js';
-import { monitorSeverity, unresolvedTable, sevBadge, SEVERITIES } from './problems.js';
+import { monitorSeverity, unresolvedTable, sevBadge, SEVERITIES, monitoredData } from './problems.js';
 
 const POLL_MS = 3000;
 const $ = (sel) => document.querySelector(sel);
@@ -1007,7 +1007,7 @@ async function renderDetail(id, isUpdate = false) {
     if (state.loaded) fill(main, h('div', { class: 'card' }, h('p', null, 'Monitor not found.'), h('a', { href: '#/' }, 'Back to the falls')));
     return;
   }
-  if (detailCache.id !== id) detailCache = { id, at: 0, uptime: null, events: [], chartKey: '' };
+  if (detailCache.id !== id) detailCache = { id, at: 0, uptime: null, events: [], chartKey: '', watch: null, watchKey: '' };
   const stale = Date.now() - detailCache.at > 15000 || !isUpdate;
 
   let chartBox = main.querySelector('.detail .chart-box');
@@ -1113,14 +1113,28 @@ async function renderDetail(id, isUpdate = false) {
         h('div', { class: 'rel' }, h('h4', null, h('span', { class: 'rel-icon down' }, '↓'), 'Dependent monitors'), relChips(kids),
           allDown > kids.length ? h('p', { class: 'muted small' }, `${allDown} monitors downstream in total.`) : null))),
 
+    monitoredData(detailCache.watch, m),
+
     h('section', { class: 'card' },
       h('div', { class: 'card-head' }, h('h2', null, 'Events')),
       h('div', { class: 'events-box' }, detailCache.events.length ? eventTable(detailCache.events, false) : h('p', { class: 'muted' }, 'No status changes yet.')))));
 
+  // What problems read from it: again after every check.
+  const watchKey = `${m.lastCheck}:${m.tags.join()}:${JSON.stringify(state.problems)}`;
+  if (detailCache.watchKey !== watchKey && !stale) {
+    detailCache.watchKey = watchKey;
+    api(`monitors/${id}/problems`).then((list) => {
+      if (ui.route?.id !== id || JSON.stringify(list) === JSON.stringify(detailCache.watch)) return;
+      detailCache.watch = list;
+      renderDetail(id, true);
+    }).catch(() => {});
+  }
   if (stale) {
     detailCache.at = Date.now();
-    const [uptime, events] = await Promise.all([api(`monitors/${id}/uptime`), api(`monitors/${id}/events`)]).catch(() => [null, []]);
+    detailCache.watchKey = watchKey;
+    const [uptime, events, watch] = await Promise.all([api(`monitors/${id}/uptime`), api(`monitors/${id}/events`), api(`monitors/${id}/problems`)]).catch(() => [null, [], null]);
     if (ui.route?.id !== id) return;
+    detailCache.watch = watch;
     detailCache.uptime = uptime;
     detailCache.events = events;
     return renderDetail(id, true);

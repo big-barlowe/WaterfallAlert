@@ -1,5 +1,5 @@
 name: Waterfall Alert
-version: "0.12.0"
+version: "0.12.1"
 slug: waterfall_alert
 description: Hierarchical uptime monitoring — one alert for the root cause, not twenty.
 url: https://github.com/big-barlowe/WaterfallAlert

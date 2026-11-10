@@ -630,6 +630,30 @@ export function createApi({ store, engine, icons }) {
 
   route('GET', '/api/problems', () => problemsWithCoverage());
 
+  // The value problems watching one monitor, for its page: its state for
+  // each, and which reading it answered. state: 'open' | 'ok' | 'unknown'
+  // (answers none of the readings) | 'waiting' (not checked since) |
+  // 'notSnmp' (tagged, but there is nothing to read).
+  route('GET', '/api/monitors/:id/problems', ({ params }) => {
+    const m = engine.monitors.get(Number(params.id));
+    if (!m) throw new HttpError(404, 'Monitor not found');
+    const tags = store.listTags();
+    const mine = store.monitorTagMap().get(m.id) ?? [];
+    const state = new Map(engine.problemState().filter((x) => x.monitorId === m.id).map((x) => [x.problemId, x]));
+    return store.listProblems()
+      .filter((p) => p.kind === 'value' && inScope(p, mine, tags) && (m.type === 'snmp' || p.config.tagExpr || p.config.tagIds.length))
+      .map((p) => {
+        const x = state.get(p.id);
+        return {
+          problem: { id: p.id, name: p.name, severity: p.severity, readings: p.config.readings, checks: p.config.checks },
+          state: m.type !== 'snmp' ? 'notSnmp' : x?.state ?? 'waiting',
+          since: x?.since ?? null,
+          value: x?.value ?? '',
+          reading: x?.reading ?? null,
+        };
+      });
+  });
+
   route('POST', '/api/problems', ({ body }) => {
     const p = { kind: 'value', ...normalizeValueProblem(body, undefined, store.listTags()) };
     const id = store.createProblem(p);

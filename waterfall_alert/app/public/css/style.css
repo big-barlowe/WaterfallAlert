@@ -1102,3 +1102,16 @@ table.csv-columns { width: 100%; border-collapse: collapse; font-size: 0.82rem; 
 .open-tags { display: inline-flex; flex-wrap: wrap; gap: 3px; margin-left: 8px; vertical-align: middle; }
 .open-value { font-family: var(--mono); font-size: 0.82rem; color: var(--muted); }
 .open-empty { margin: 4px 0; }
+
+/* ---- monitor page: Monitored data --------------------------------------------------- */
+.mon-data > p { margin: 0 0 8px; }
+.mon-data-problem { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; }
+.mon-data-what { display: flex; flex-direction: column; gap: 1px; }
+.mon-data-label { font-size: 0.72rem; color: var(--faint); text-transform: uppercase; letter-spacing: 0.05em; }
+.mon-data-name { font-weight: 600; }
+.mon-data-name:empty { display: none; }
+.mon-data-oid { font: 0.76rem var(--mono); color: var(--muted); overflow-wrap: anywhere; }
+.mon-state { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); white-space: nowrap; }
+.mon-state.st-ok { color: #99f6e4; border-color: rgba(45, 212, 191, 0.45); }
+.mon-state.st-open { color: color-mix(in srgb, var(--sev) 55%, white); border-color: var(--sev); background: color-mix(in srgb, var(--sev) 16%, transparent); }
+.mon-state.st-unknown { color: #fca5a5; border-color: rgba(248, 113, 113, 0.45); }

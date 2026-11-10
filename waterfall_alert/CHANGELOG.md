@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.1
+
+- **Monitored data** on a monitor's page: every problem that reads a value from it, with the reading it answered (and the OID's name), the value now, what opens the problem, and whether it's open, OK or can't be read.
+
 ## 0.12.0
 
 - **SNMP value problems.** Besides a monitor going down, a problem can now watch a value on the SNMP monitors with certain tags: **+ Add problem** on the Notifications page. Start from a ready-made one (*UPS on battery*, *UPS battery low*, *UPS on bypass*, *CPU busy*, *Disk almost full*, *Memory almost full*) or a blank one. A problem has several **readings**, since makes report the same thing in different places, and each monitor uses the first one it answers. The UPS ones read the standard UPS-MIB and APC's, Eaton's and CyberPower's own values, so one problem covers a mixed fleet tagged *UPS*. Values are listed by name from the MIB library.

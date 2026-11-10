@@ -125,13 +125,19 @@ function lookupOid(o) {
 
 const valueName = (r, v) => r.names?.[v] ?? null;
 
+// What a reading tests, as text: "is battery (5)", "is at least 90".
+function readingWhen(r) {
+  if (r.op === 'in' || r.op === 'not-in') {
+    const vals = r.values.map((v) => (valueName(r, v) ? `${valueName(r, v)} (${v})` : String(v)));
+    return r.op === 'in' && vals.length === 1 ? `is ${vals[0]}` : `${OP_LABEL[r.op]} ${vals.join(r.op === 'in' ? ', ' : ', ')}`;
+  }
+  return `${OP_LABEL[r.op]} ${r.value}${r.source === 'oid' ? '' : '%'}`;
+}
+
 // "UPS-MIB (standard): 1.3.6.1.2.1.33.1.4.1.0 is battery (5)"
 function readingText(r) {
   const what = r.source === 'oid' ? r.oid : SOURCE_LABEL[r.source];
-  const vals = r.op === 'in' || r.op === 'not-in'
-    ? r.values.map((v) => (valueName(r, v) ? `${valueName(r, v)} (${v})` : String(v))).join(r.op === 'in' ? ' or ' : ', ')
-    : String(r.value);
-  return `${r.label ? `${r.label}: ` : ''}${what} ${r.op === 'in' && r.values.length === 1 ? 'is' : OP_LABEL[r.op]} ${vals}`;
+  return `${r.label ? `${r.label}: ` : ''}${what} ${readingWhen(r)}`;
 }
 
 // ---- picking monitors by tag ---------------------------------------------------
@@ -648,4 +654,47 @@ export function unresolvedTable(box) {
         : h('p', { class: 'muted open-empty' }, all.length ? 'Nothing unresolved matches the filter.' : 'Nothing unresolved. Calm waters.'));
   }
   return paint;
+}
+
+// ---- the monitor page: what problems watch on it ---------------------------------
+
+const STATE_LABEL = { open: 'Open', ok: 'OK', unknown: "Can't be read", waiting: 'Not checked yet', notSnmp: 'Not SNMP' };
+
+// "Monitored data": one row per value problem watching the monitor
+// (GET api/monitors/:id/problems), with the reading it answered.
+export function monitoredData(list, m) {
+  if (!list?.length) return null;
+  const oidCell = (r) => {
+    if (r.source !== 'oid') return h('span', null, SOURCE_LABEL[r.source]);
+    const name = h('span', { class: 'mon-data-name' });
+    lookupOid(r.oid).then((info) => info && fill(name, info.name));
+    return [name, h('code', { class: 'mon-data-oid' }, r.oid)];
+  };
+  const rows = list.map((x) => {
+    const readings = x.problem.readings;
+    const r = x.reading != null ? readings[x.reading] : readings.length === 1 ? readings[0] : null;
+    const state = h('span', { class: `mon-state st-${x.state}${x.state === 'open' ? ` sev-${x.problem.severity}` : ''}` }, STATE_LABEL[x.state] ?? x.state);
+    let data;
+    if (x.state === 'notSnmp') data = h('span', { class: 'muted' }, 'Only SNMP monitors have values to read');
+    else if (x.state === 'unknown') {
+      data = h('span', null, h('span', { class: 'problem-unknown' }, `Answers none of the ${readings.length} reading${readings.length === 1 ? '' : 's'}`), ' · ',
+        h('a', { href: `#/monitor/${m.id}/snmp` }, 'find its value in All data'));
+    } else if (r) data = h('span', { class: 'mon-data-what' }, r.label ? h('span', { class: 'mon-data-label' }, r.label) : null, oidCell(r));
+    else data = h('span', { class: 'muted' }, `${readings.length} readings; the first one it answers`);
+    return h('tr', { class: x.state === 'open' ? `sev-row sev-${x.problem.severity}` : '' },
+      h('td', null, h('div', { class: 'mon-data-problem' }, h('span', null, x.problem.name), sevBadge(x.problem.severity))),
+      h('td', null, data),
+      h('td', { class: 'open-value' }, x.value || '—'),
+      h('td', { class: 'small' }, r ? readingWhen(r) : '—', x.problem.checks > 1 ? h('span', { class: 'muted' }, `, ${x.problem.checks} checks in a row`) : null),
+      h('td', { class: 'nowrap' }, state, x.since && (x.state === 'open' || x.state === 'unknown')
+        ? h('span', { class: 'muted small', title: fmtTime(x.since) }, ` · ${fmtAgo(x.since).replace(' ago', '')}`) : null));
+  });
+  return h('section', { class: 'card mon-data' },
+    h('div', { class: 'card-head' },
+      h('h2', null, 'Monitored data'),
+      h('a', { class: 'muted small', href: '#/notifications' }, 'Problems in Notifications')),
+    h('p', { class: 'muted small' }, 'Values problems read from this monitor on every check, by its tags.'),
+    h('div', { class: 'open-wrap' }, h('table', { class: 'open-table' },
+      h('thead', null, h('tr', null, ['Problem', 'Data', 'Value now', 'Problem when it', 'State'].map((t) => h('th', null, t)))),
+      h('tbody', null, rows))));
 }

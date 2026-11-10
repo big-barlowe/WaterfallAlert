@@ -239,3 +239,19 @@ test('the SNMP check reads the values problems ask for, v1 and v2c', async () =>
     }
   }
 });
+
+test("a monitor's page lists the problems reading it, and which reading it answered", async () => {
+  const t = setup();
+  const p = await t.call('POST', '/api/problems', { ...onBattery, config: { ...onBattery.config, tagIds: [t.ups] } });
+  await t.engine.idle();
+  t.values['UPS 2'] = { [APC]: 3 };
+  await t.check('UPS 2');
+  const [apc] = await t.call('GET', `/api/monitors/${t.ids['UPS 2']}/problems`);
+  assert.equal(apc.problem.id, p.id);
+  assert.deepEqual([apc.state, apc.reading, apc.value], ['open', 1, 'onBattery (3)']);
+  const [none] = await t.call('GET', `/api/monitors/${t.ids['UPS 1']}/problems`);
+  assert.deepEqual([none.state, none.reading], ['unknown', null]);
+  const [printer] = await t.call('GET', `/api/monitors/${t.ids.Printer}/problems`);
+  assert.equal(printer.state, 'notSnmp');
+  assert.deepEqual(await t.call('GET', `/api/monitors/${t.ids.Core}/problems`), []);
+});

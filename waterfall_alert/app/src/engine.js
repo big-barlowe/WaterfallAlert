@@ -467,6 +467,7 @@ export class Engine {
         x = { problemId: p.id, monitorId: m.id, state: null, since: now, value: '', hits: 0 };
         this.pstate.set(key, x);
       }
+      x.reading = r.reading ?? null; // which reading answered (memory only)
       const was = x.state;
       if (r.state === 'open') {
         x.hits++;
