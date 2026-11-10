@@ -136,7 +136,7 @@ docker compose start
 
 For a backup without stopping, use SQLite's online backup, e.g. `sqlite3 data/waterfall.db ".backup 'waterfall-backup.db'"` (requires the `sqlite3` tool on the host).
 
-**For just the monitors**, use **Settings → Import & export monitors → Export all monitors (CSV)**. This file is small and readable, and is the easiest way to move to a new install (see the [CSV guide](csv.md)). It doesn't include heartbeat history or notification channels.
+**For just the monitors**, use **Settings → Import & export monitors → Export all monitors (CSV)**. This file is small and readable, and is the easiest way to move to a new install (see the [CSV guide](csv.md)). It doesn't include heartbeat history, notification channels or rules.
 
 **To restore**, stop the container, put the backed-up files back in the data folder, and start it again.
 
@@ -220,7 +220,7 @@ Use the address Home Assistant is reachable at *from the container* (see [Networ
 
 Both run the same code and read the same database format, so you can switch either way:
 
-- **Easiest:** **Settings → Import & export monitors**. Export on one side and import on the other. Create notification channels with the same names first. Heartbeat history isn't carried over.
+- **Easiest:** **Settings → Import & export monitors**. Export on one side and import on the other, then set up notification channels and rules on the new side. Heartbeat history isn't carried over.
 - **Everything, history included:** stop both, then copy `waterfall.db` (and `-wal`/`-shm`, if present) into the other one's data folder. From the add-on, the database is in its backups: make a partial backup of just the add-on, download it, and look for `waterfall.db` in the extracted archive. It's in the add-on's own archive, inside its data folder.
 
 ## Troubleshooting

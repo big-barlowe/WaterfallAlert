@@ -7,6 +7,7 @@ import { exportCsv, importCsv, CSV_COLUMNS, CSV_EXAMPLE, csvTemplate } from './t
 import { DISPLAY_KEYS, snmpBrowse } from './checkers/snmp.js';
 import { isOid } from './snmp.js';
 import { buildLibrary, mibLibrary, parseMib, setMibLibrary, splitModules } from './mib.js';
+import { parseTagExpr, renameInExpr } from '../public/js/filter.js';
 
 // A monitor's config without the keys that only change how its data is
 // shown, to tell whether what it checks has changed.
@@ -110,7 +111,6 @@ export function createApi({ store, engine, icons }) {
     ...m,
     parentIds: engine.graph.parentsOf(m.id),
     childIds: engine.graph.childrenOf(m.id),
-    notificationIds: store.monitorNotificationIds(m.id),
     tagIds: store.monitorTagIds(m.id),
   });
 
@@ -144,8 +144,6 @@ export function createApi({ store, engine, icons }) {
       const newId = store.createMonitor(data);
       applyEdges(newId, parentIds, childIds);
       applyMonitorTags(newId, tagIds, body.tagsDownstream);
-      const notif = idList(body.notificationIds) ?? store.listNotifications().filter((n) => n.isDefault).map((n) => n.id);
-      store.setMonitorNotifications(newId, notif);
       return newId;
     });
     if (upload) icons.saveUpload(id, upload);
@@ -168,8 +166,6 @@ export function createApi({ store, engine, icons }) {
       if (existing.type !== data.type || checkedConfig(existing.config) !== checkedConfig(data.config)) store.clearMonitorData(existing.id);
       applyEdges(existing.id, parentIds, childIds);
       applyMonitorTags(existing.id, tagIds, body.tagsDownstream);
-      const notif = idList(body.notificationIds);
-      if (notif) store.setMonitorNotifications(existing.id, notif);
     });
     if (upload) icons.saveUpload(existing.id, upload);
     engine.reload([existing.id, ...oldChildren, ...(childIds ?? [])]);
@@ -403,6 +399,13 @@ export function createApi({ store, engine, icons }) {
     store.tx(() => {
       store.updateTag(existing.id, t);
       if (upload) store.setTagIcon(existing.id, upload);
+      // Rules written as expressions name their tags; keep them working.
+      if (t.name !== existing.name) {
+        for (const r of store.listRules()) {
+          const expr = r.tagExpr && renameInExpr(r.tagExpr, existing.name, t.name);
+          if (expr && expr !== r.tagExpr) store.updateRule(r.id, { ...r, tagExpr: expr });
+        }
+      }
     });
     engine.touch();
     iconsChanged(null);
@@ -472,7 +475,7 @@ export function createApi({ store, engine, icons }) {
     const name = String(body.name ?? '').trim();
     if (!name) throw new HttpError(400, 'Name is required');
     if (!providers[body.type]) throw new HttpError(400, `Unknown notification type "${body.type}"`);
-    return { name, type: body.type, config: body.config ?? {}, isDefault: Boolean(body.isDefault), active: body.active !== false };
+    return { name, type: body.type, config: body.config ?? {}, active: body.active !== false };
   };
 
   route('GET', '/api/notification-types', () => providerCatalog());
@@ -480,12 +483,12 @@ export function createApi({ store, engine, icons }) {
 
   route('POST', '/api/notifications', ({ body }) => {
     const n = normalizeNotification(body);
-    const id = store.createNotification(n);
-    if (body.applyToAll) {
-      for (const m of store.listMonitors()) {
-        store.setMonitorNotifications(m.id, [...store.monitorNotificationIds(m.id), id]);
-      }
-    }
+    const id = store.tx(() => {
+      const newId = store.createNotification(n);
+      // "Send it everything": a rule for every problem on every monitor.
+      if (body.alertAll) store.createRule({ channelIds: [newId] });
+      return newId;
+    });
     return store.getNotification(id);
   });
 
@@ -523,6 +526,63 @@ export function createApi({ store, engine, icons }) {
     });
     if (!res.ok) throw new HttpError(502, res.error);
     return { ok: true };
+  });
+
+  // ---- notification rules and problems ---------------------------------------
+  // Rules only decide where alerts go, so changing them needs no reload.
+
+  const ruleOr404 = (id) => store.getRule(Number(id)) ?? (() => { throw new HttpError(404, 'Rule not found'); })();
+
+  // Unknown channels and problems are dropped. Tag ids are kept even when the
+  // tag is gone: a rule whose tags were all deleted must stop matching rather
+  // than quietly widen to every monitor.
+  const normalizeRule = (body, base = {}) => {
+    const pick = (key, list) => {
+      const known = new Set(list.map((x) => x.id));
+      return (idList(body[key]) ?? base[key] ?? []).filter((id) => known.has(id));
+    };
+    let tagExpr = String(body.tagExpr ?? base.tagExpr ?? '').trim();
+    if (tagExpr) {
+      const expr = parseTagExpr(tagExpr, store.listTags());
+      if (expr?.error) throw new HttpError(400, expr.error);
+      tagExpr += ')'.repeat(expr?.unclosed ?? 0);
+    }
+    return {
+      channelIds: pick('channelIds', store.listNotifications()),
+      problemIds: pick('problemIds', store.listProblems()),
+      tagIds: tagExpr ? [] : (idList(body.tagIds) ?? base.tagIds ?? []),
+      tagMatch: (body.tagMatch ?? base.tagMatch) === 'all' ? 'all' : 'any',
+      tagExpr,
+      downstream: (body.downstream ?? base.downstream) !== false,
+    };
+  };
+
+  route('GET', '/api/rules', () => store.listRules());
+
+  route('POST', '/api/rules', ({ body }) => store.getRule(store.createRule(normalizeRule(body))));
+
+  route('PUT', '/api/rules/:id', ({ params, body }) => {
+    const existing = ruleOr404(params.id);
+    store.updateRule(existing.id, normalizeRule(body, existing));
+    return store.getRule(existing.id);
+  });
+
+  route('DELETE', '/api/rules/:id', ({ params }) => {
+    if (!store.deleteRule(Number(params.id))) throw new HttpError(404, 'Rule not found');
+    return { ok: true };
+  });
+
+  route('GET', '/api/problems', () => store.listProblems());
+
+  route('PUT', '/api/problems/:id', ({ params, body }) => {
+    const existing = store.getProblem(Number(params.id));
+    if (!existing) throw new HttpError(404, 'Problem not found');
+    const name = String(body.name ?? existing.name).trim();
+    if (!name) throw new HttpError(400, 'Name is required');
+    const config = { ...existing.config };
+    if (existing.kind === 'down' && body.config?.recovery != null) config.recovery = Boolean(body.config.recovery);
+    store.updateProblem(existing.id, { name, config });
+    return store.getProblem(existing.id);
   });
 
   // ---- alert log & settings -------------------------------------------------

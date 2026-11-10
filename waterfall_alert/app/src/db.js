@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import crypto from 'node:crypto';
 
-const MIGRATIONS = [
+export const MIGRATIONS = [
   // v1
   `
   CREATE TABLE monitors (
@@ -130,6 +130,65 @@ const MIGRATIONS = [
     added_at INTEGER NOT NULL
   );
   `,
+  // v7: notification rules. "Alert <channels> when <problems> for <tags>"
+  // replaces choosing channels on each monitor. Problems are objects of their
+  // own; for now there is the one built in (a monitor is down). The old
+  // per-monitor choices become rules: a channel every monitor used is sent
+  // everything, and a channel only some used gets a tag on those monitors.
+  (db) => {
+    db.exec(`
+    CREATE TABLE problems (
+      id     INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind   TEXT NOT NULL,
+      name   TEXT NOT NULL,
+      config TEXT NOT NULL DEFAULT '{}'
+    );
+    INSERT INTO problems (kind, name, config) VALUES ('down', 'Monitor down', '{"recovery":true}');
+
+    CREATE TABLE notification_rules (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      channel_ids TEXT    NOT NULL DEFAULT '[]',
+      problem_ids TEXT    NOT NULL DEFAULT '[]',
+      tag_ids     TEXT    NOT NULL DEFAULT '[]',
+      tag_match   TEXT    NOT NULL DEFAULT 'any',
+      tag_expr    TEXT    NOT NULL DEFAULT '',
+      downstream  INTEGER NOT NULL DEFAULT 1
+    );
+    `);
+    const monitors = db.prepare('SELECT id FROM monitors').all().map((r) => r.id);
+    const channels = db.prepare('SELECT id, name, is_default FROM notifications ORDER BY id').all();
+    const uses = new Map(channels.map((c) => [c.id, []]));
+    for (const r of db.prepare('SELECT monitor_id, notification_id FROM monitor_notifications ORDER BY monitor_id').all()) {
+      uses.get(r.notification_id)?.push(r.monitor_id);
+    }
+    const everyone = [];
+    const groups = new Map(); // the same monitors -> channels
+    for (const c of channels) {
+      const ids = uses.get(c.id);
+      if (monitors.length ? ids.length === monitors.length : c.is_default) everyone.push(c.id);
+      else if (ids.length) {
+        const key = ids.join(',');
+        if (!groups.has(key)) groups.set(key, { monitors: ids, channels: [] });
+        groups.get(key).channels.push(c);
+      }
+    }
+    const addRule = db.prepare('INSERT INTO notification_rules (channel_ids, tag_ids, downstream) VALUES (?, ?, ?)');
+    if (everyone.length) addRule.run(JSON.stringify(everyone), '[]', 1);
+    const taken = new Set(db.prepare('SELECT name FROM tags').all().map((t) => t.name.toLowerCase()));
+    const addTag = db.prepare("INSERT INTO tags (name, color) VALUES (?, '#94a3b8')");
+    const tagMonitor = db.prepare('INSERT OR IGNORE INTO monitor_tags (monitor_id, tag_id) VALUES (?, ?)');
+    for (const g of groups.values()) {
+      const base = `Alerts: ${g.channels.map((c) => c.name).join(', ')}`;
+      let name = base;
+      for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${base} (${n})`;
+      taken.add(name.toLowerCase());
+      const tagId = Number(addTag.run(name).lastInsertRowid);
+      for (const m of g.monitors) tagMonitor.run(m, tagId);
+      // Before, only the monitor at fault chose; keep it that way.
+      addRule.run(JSON.stringify(g.channels.map((c) => c.id)), JSON.stringify([tagId]), 0);
+    }
+    db.exec('DROP TABLE monitor_notifications; ALTER TABLE notifications DROP COLUMN is_default;');
+  },
 ];
 
 const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
@@ -178,10 +237,23 @@ function rowToNotification(r) {
     name: r.name,
     type: r.type,
     config: JSON.parse(r.config),
-    isDefault: Boolean(r.is_default),
     active: Boolean(r.active),
   };
 }
+
+function rowToRule(r) {
+  return {
+    id: r.id,
+    channelIds: JSON.parse(r.channel_ids),
+    problemIds: JSON.parse(r.problem_ids),
+    tagIds: JSON.parse(r.tag_ids),
+    tagMatch: r.tag_match,
+    tagExpr: r.tag_expr,
+    downstream: Boolean(r.downstream),
+  };
+}
+
+const rowToProblem = (r) => ({ id: r.id, kind: r.kind, name: r.name, config: JSON.parse(r.config) });
 
 export class Store {
   constructor(file) {
@@ -195,7 +267,8 @@ export class Store {
     const { user_version: version } = this.db.prepare('PRAGMA user_version').get();
     for (let v = version; v < MIGRATIONS.length; v++) {
       this.tx(() => {
-        this.db.exec(MIGRATIONS[v]);
+        if (typeof MIGRATIONS[v] === 'function') MIGRATIONS[v](this.db);
+        else this.db.exec(MIGRATIONS[v]);
         this.db.exec(`PRAGMA user_version = ${v + 1}`);
       });
     }
@@ -512,31 +585,64 @@ export class Store {
 
   createNotification(n) {
     const res = this.q(
-      'INSERT INTO notifications (name, type, config, is_default, active) VALUES (?, ?, ?, ?, ?)'
-    ).run(n.name, n.type, JSON.stringify(n.config ?? {}), n.isDefault ? 1 : 0, n.active === false ? 0 : 1);
+      'INSERT INTO notifications (name, type, config, active) VALUES (?, ?, ?, ?)'
+    ).run(n.name, n.type, JSON.stringify(n.config ?? {}), n.active === false ? 0 : 1);
     return Number(res.lastInsertRowid);
   }
 
   updateNotification(id, n) {
     this.q(
-      'UPDATE notifications SET name = ?, type = ?, config = ?, is_default = ?, active = ? WHERE id = ?'
-    ).run(n.name, n.type, JSON.stringify(n.config ?? {}), n.isDefault ? 1 : 0, n.active === false ? 0 : 1, id);
+      'UPDATE notifications SET name = ?, type = ?, config = ?, active = ? WHERE id = ?'
+    ).run(n.name, n.type, JSON.stringify(n.config ?? {}), n.active === false ? 0 : 1, id);
   }
 
   deleteNotification(id) {
     this.q('DELETE FROM notifications WHERE id = ?').run(id);
   }
 
-  monitorNotificationIds(monitorId) {
-    return this.q('SELECT notification_id AS id FROM monitor_notifications WHERE monitor_id = ?')
-      .all(monitorId).map((r) => r.id);
+  // ---- notification rules and problems -------------------------------------
+
+  listRules() {
+    return this.q('SELECT * FROM notification_rules ORDER BY id').all().map(rowToRule);
   }
 
-  setMonitorNotifications(monitorId, ids) {
-    this.q('DELETE FROM monitor_notifications WHERE monitor_id = ?').run(monitorId);
-    for (const nid of ids) {
-      this.q('INSERT OR IGNORE INTO monitor_notifications (monitor_id, notification_id) VALUES (?, ?)').run(monitorId, nid);
-    }
+  getRule(id) {
+    const r = this.q('SELECT * FROM notification_rules WHERE id = ?').get(id);
+    return r ? rowToRule(r) : null;
+  }
+
+  #ruleValues(r) {
+    return [JSON.stringify(r.channelIds ?? []), JSON.stringify(r.problemIds ?? []), JSON.stringify(r.tagIds ?? []),
+      r.tagMatch === 'all' ? 'all' : 'any', r.tagExpr ?? '', r.downstream === false ? 0 : 1];
+  }
+
+  createRule(r) {
+    return Number(this.q(
+      'INSERT INTO notification_rules (channel_ids, problem_ids, tag_ids, tag_match, tag_expr, downstream) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(...this.#ruleValues(r)).lastInsertRowid);
+  }
+
+  updateRule(id, r) {
+    this.q(
+      'UPDATE notification_rules SET channel_ids = ?, problem_ids = ?, tag_ids = ?, tag_match = ?, tag_expr = ?, downstream = ? WHERE id = ?'
+    ).run(...this.#ruleValues(r), id);
+  }
+
+  deleteRule(id) {
+    return this.q('DELETE FROM notification_rules WHERE id = ?').run(id).changes > 0;
+  }
+
+  listProblems() {
+    return this.q('SELECT * FROM problems ORDER BY id').all().map(rowToProblem);
+  }
+
+  getProblem(id) {
+    const r = this.q('SELECT * FROM problems WHERE id = ?').get(id);
+    return r ? rowToProblem(r) : null;
+  }
+
+  updateProblem(id, p) {
+    this.q('UPDATE problems SET name = ?, config = ? WHERE id = ?').run(p.name, JSON.stringify(p.config ?? {}), id);
   }
 
   // ---- alert log ----------------------------------------------------------

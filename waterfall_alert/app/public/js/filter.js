@@ -109,3 +109,19 @@ export function exprName(name) {
   const plain = /^[^&|,!()"]+$/.test(name) && !name.split(/\s+/).some((w) => WORDS[w.toLowerCase()]);
   return plain ? name : `"${name}"`;
 }
+
+// The expression with tag `from` renamed to `to` (case-insensitively), for
+// expressions that are saved (notification rules). Spacing is normalised.
+export function renameInExpr(text, from, to) {
+  const tokens = tokenize(String(text ?? ''));
+  const key = from.toLowerCase();
+  if (!tokens.some((t) => t.name?.toLowerCase() === key)) return text;
+  let out = '';
+  for (const t of tokens) {
+    if (t.op === '&' || t.op === '|') out = `${out.trimEnd()} ${t.op} `;
+    else if (t.op === ')') out = `${out.trimEnd()})`;
+    else if (t.op) out += t.op;
+    else out += exprName(t.name.toLowerCase() === key ? to : t.name);
+  }
+  return out.trim();
+}

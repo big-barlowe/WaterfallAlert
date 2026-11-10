@@ -1,6 +1,7 @@
 import { api, h, toast, TYPE_LABEL, fill } from './util.js';
 import { GLYPHS, iconEl, glyphPreview } from './icons.js';
 import { tagPill, newTagDialog, tagIconView } from './tags.js';
+import { matchRules } from './rules.js';
 
 const TYPE_FIELDS = {
   group: [],
@@ -259,9 +260,11 @@ function downstream(childMap, start) {
 }
 
 export async function renderMonitorForm(root, { state, id, presetParent, navigate }) {
-  const [existing, notifications, info] = await Promise.all([
+  const [existing, channels, rules, problems, info] = await Promise.all([
     id ? api(`monitors/${id}`) : null,
     api('notifications'),
+    api('rules'),
+    api('problems'),
     api('info'),
   ]);
   const self = id ?? 'new';
@@ -271,7 +274,6 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       name: '', type: 'http', config: {}, interval: 60, retries: 1, retryInterval: 20, timeout: 10,
       resendInterval: 0, parentMode: 'all', description: '', active: true,
       parentIds: presetParent ? [presetParent] : [], childIds: [],
-      notificationIds: notifications.filter((n) => n.isDefault).map((n) => n.id),
     };
   const monitors = state.monitors;
   const nameOf = (mid) => monitors.find((m) => m.id === mid)?.name ?? `#${mid}`;
@@ -288,6 +290,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
   const typeBox = h('div');
   const hierarchyBox = h('div');
   const tagsBox = h('div', { class: 'field' });
+  const alertsBox = h('div', { class: 'alert-route' });
 
   const renderType = () => {
     fill(typeBox, 
@@ -403,7 +406,22 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       draft.childIds.length && added.length ? h('label', { class: 'check' },
         h('input', { type: 'checkbox', checked: tagsDownstream, onchange: (e) => { tagsDownstream = e.target.checked; } }),
         h('span', null, `Also add ${added.join(', ')} to everything downstream of this monitor`)) : null,
-      h('small', null, 'Tags group monitors across the hierarchy (by site, owner…). Filter by them in the sidebar.'));
+      h('small', null, 'Tags group monitors across the hierarchy (by site, owner…). Filter by them in the sidebar, and pick which alerts go where in Notifications.'));
+    renderAlertRoute();
+  };
+
+  // Where its alerts go, from the notification rules and the tags picked above.
+  const renderAlertRoute = () => {
+    const problem = problems.find((p) => p.kind === 'down');
+    const { channelIds } = matchRules({ rules, tags, tagsOf: () => draft.tagIds }, { problemId: problem?.id, monitorId: self });
+    const to = channels.filter((c) => channelIds.has(c.id));
+    fill(alertsBox,
+      to.length
+        ? h('p', { class: 'alert-route-to' }, 'When it is down, the alert goes to',
+          to.map((c) => h('span', { class: `rule-chip${c.active ? '' : ' inactive'}`, title: c.active ? null : 'Inactive: nothing is sent' }, c.name)))
+        : h('p', { class: 'muted' }, channels.length ? 'No notification rule matches this monitor, so its alerts are not sent anywhere.' : 'There are no notification channels yet, so alerts are not sent anywhere.'),
+      h('p', { class: 'help' }, 'Which alerts go where is set by tag under ', h('a', { href: '#/notifications' }, 'Notifications'),
+        '. Alerts are sent for the monitor that is actually down (the top of the affected branch).'));
   };
 
   const renderHierarchy = () => {
@@ -489,21 +507,8 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
         num('timeout', 'Timeout (s)', null, 1),
         num('resendInterval', 'Remind every N down checks', '0 = alert once', 0))),
     h('section', null,
-      h('h3', null, 'Notifications'),
-      notifications.length
-        ? h('div', { class: 'checks' }, notifications.map((n) => h('label', { class: 'check' },
-          h('input', {
-            type: 'checkbox',
-            checked: draft.notificationIds.includes(n.id),
-            onchange: (e) => {
-              draft.notificationIds = e.target.checked
-                ? [...draft.notificationIds, n.id]
-                : draft.notificationIds.filter((x) => x !== n.id);
-            },
-          }),
-          h('span', null, n.name, h('span', { class: 'muted small' }, ` · ${n.type}`)))))
-        : h('p', { class: 'muted' }, 'No notification channels yet. ', h('a', { href: '#/notifications' }, 'Add one'), ' to get alerts.'),
-      h('p', { class: 'help' }, 'Alerts go to the channels of the monitor that is actually down (the top of the affected branch).')),
+      h('h3', null, 'Alerts'),
+      alertsBox),
     h('div', { class: 'form-actions' },
       h('button', { type: 'button', class: 'btn ghost', onclick: () => history.back() }, 'Cancel'),
       h('button', { type: 'submit', class: 'btn primary' }, existing ? 'Save' : 'Create monitor')));
@@ -538,10 +543,11 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
   fill(root, form);
 }
 
-export function renderNotificationForm(root, { catalog, existing, onDone }) {
+// `alertAll`: for a new channel, start with "send it everything" ticked.
+export function renderNotificationForm(root, { catalog, existing, onDone, alertAll = false }) {
   const draft = existing
     ? structuredClone(existing)
-    : { name: '', type: 'homeassistant', config: {}, isDefault: true, active: true, applyToAll: false };
+    : { name: '', type: 'homeassistant', config: {}, active: true, alertAll };
   const fieldsBox = h('div');
   const renderFields = () => fill(fieldsBox, 
     catalog[draft.type].fields.map((f) => field(f, draft.config[f.key], (v) => { draft.config[f.key] = v; })));
@@ -564,14 +570,11 @@ export function renderNotificationForm(root, { catalog, existing, onDone }) {
         h('input', { id: 'n-name', value: draft.name, placeholder: 'My phone', oninput: (e) => { draft.name = e.target.value; } }))),
     fieldsBox,
     h('label', { class: 'check' },
-      h('input', { type: 'checkbox', checked: draft.isDefault, onchange: (e) => { draft.isDefault = e.target.checked; } }),
-      h('span', null, 'Enabled by default for new monitors')),
-    h('label', { class: 'check' },
       h('input', { type: 'checkbox', checked: draft.active, onchange: (e) => { draft.active = e.target.checked; } }),
       h('span', null, 'Active')),
     existing ? null : h('label', { class: 'check' },
-      h('input', { type: 'checkbox', onchange: (e) => { draft.applyToAll = e.target.checked; } }),
-      h('span', null, 'Also apply to all existing monitors')),
+      h('input', { type: 'checkbox', checked: draft.alertAll, onchange: (e) => { draft.alertAll = e.target.checked; } }),
+      h('span', null, 'Send it every alert for every monitor (adds a rule you can change later)')),
     h('div', { class: 'form-actions' },
       h('button', { type: 'button', class: 'btn ghost', onclick: () => onDone() }, 'Cancel'),
       h('button', {

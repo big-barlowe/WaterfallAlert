@@ -1,4 +1,5 @@
-import { api, h, svg, modal, toast } from './util.js';
+import { api, h, svg, modal, toast, fill } from './util.js';
+import { parseTagExpr, exprName } from './filter.js';
 
 // Preset tag colours. Any #rrggbb works; these just read well on the dark
 // background and stay clear of the status colours.
@@ -102,4 +103,108 @@ export function newTagDialog(tags, onCreated) {
     h('div', { class: 'field' }, h('label', null, 'Colour'), pickerBox),
     preview), [{ label: 'Create tag', onClick: create }]);
   name.focus();
+}
+
+// Any of the tags (union) or all of them (intersection).
+export function matchToggle(current, onPick) {
+  return h('span', { class: 'match-toggle', role: 'radiogroup', 'aria-label': 'Monitors must have' },
+    Object.entries(TAG_MATCH).map(([mode, { label, title }]) => h('button', {
+      type: 'button',
+      class: `match-btn${current === mode ? ' on' : ''}`,
+      role: 'radio',
+      'aria-checked': String(current === mode),
+      'aria-label': label,
+      title,
+      onclick: () => onPick(mode),
+    }, matchIcon(mode))));
+}
+
+// Operators the expression editor offers as buttons: [text, label, title].
+const EXPR_OPS = [
+  ['&', 'and', 'And: both sides must match'],
+  ['|', 'or', 'Or: either side may match'],
+  ['!', 'not', 'Not: everything except what follows'],
+  ['(', '(', 'Open a group (closed for you if you leave it open)'],
+  [')', ')', 'Close the group'],
+];
+
+// A tag expression (filter.js) in one line of text, checked as you type.
+// Clicking a tag or an operator inserts it at the cursor, so one can be
+// built without typing. Used by the tag filter and by notification rules.
+//   value       starting text
+//   tags()      the current tags
+//   describe(expr)  status line for a valid expression (expr is null if empty)
+//   onApply(text)   with any open brackets closed ('' = cleared)
+//   onCancel()
+//   id          prefix of the input's and status line's element ids
+// Sets box.exprCheck to re-run the check.
+export function tagExprEditor(box, { value, tags, describe, applyLabel = 'Apply', onApply, onCancel, example = '', placeholder = 'Switch & (Home | Cabin)', id = 'expr' }) {
+  const input = h('input', {
+    id: `${id}-input`,
+    class: 'expr-input',
+    value,
+    placeholder,
+    spellcheck: false,
+    autocomplete: 'off',
+    'aria-label': 'Tag expression',
+    'aria-describedby': `${id}-status`,
+    oninput: () => check(),
+    onkeydown: (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        apply();
+      } else if (e.key === 'Escape') {
+        e.stopPropagation();
+        onCancel();
+      }
+    },
+  });
+  const status = h('div', { id: `${id}-status`, class: 'expr-status', 'aria-live': 'polite' });
+  const applyBtn = h('button', { type: 'button', class: 'btn small primary', onclick: () => apply() }, applyLabel);
+  const check = () => {
+    const expr = parseTagExpr(input.value, tags());
+    applyBtn.disabled = Boolean(expr?.error);
+    if (expr?.error) return fill(status, h('span', { class: 'expr-error' }, expr.error));
+    fill(status, h('span', { class: 'muted' }, describe(expr)));
+  };
+  const apply = () => {
+    const expr = parseTagExpr(input.value, tags());
+    if (expr?.error) return;
+    onApply(expr ? input.value.trimEnd() + ')'.repeat(expr.unclosed) : '');
+  };
+  box.exprCheck = () => check();
+  // Spaces around & and |, none inside brackets or after !.
+  const insert = (token, op) => {
+    const { selectionStart, selectionEnd, value: text } = input;
+    let before = text.slice(0, selectionStart);
+    let add = op ? token : exprName(token);
+    if (op === ')') before = before.trimEnd();
+    else if (before && !/\s$/.test(before) && (op === '&' || op === '|' || !/[(!]$/.test(before))) add = ` ${add}`;
+    if (op === '&' || op === '|') add += ' ';
+    input.value = before + add + text.slice(selectionEnd);
+    const at = before.length + add.length;
+    input.focus();
+    input.setSelectionRange(at, at);
+    check();
+  };
+  fill(box,
+    h('div', { class: 'expr-editor' },
+      input,
+      h('div', { class: 'expr-row' }, status, applyBtn,
+        h('button', { type: 'button', class: 'btn small ghost', onclick: () => onCancel() }, 'Cancel')),
+      h('div', { class: 'expr-ops', role: 'group', 'aria-label': 'Insert an operator' }, EXPR_OPS.map(([op, label, title]) => h('button', {
+        type: 'button',
+        class: 'expr-op',
+        title,
+        'aria-label': title,
+        onclick: () => insert(op, op),
+      }, op === label ? op : [h('b', null, op), ` ${label}`]))),
+      h('div', { class: 'expr-tags' }, tags().map((t) => tagPill(t, {
+        title: `Insert ${t.name}`,
+        onclick: () => insert(t.name),
+      }))),
+      h('p', { class: 'expr-help' },
+        'Click operators and tags to build an expression, or type it. ',
+        'E.g. ', h('code', null, 'Switch & (Home | Cabin)'), ` ${example}`)));
+  check();
 }

@@ -9,10 +9,7 @@ import { exportCsv, importCsv, CSV_EXAMPLE, csvTemplate } from '../src/transfer.
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7, 7]);
 
 function freshStore() {
-  const store = new Store(':memory:');
-  store.createNotification({ name: 'Phone', type: 'webhook', config: {}, isDefault: true });
-  store.createNotification({ name: 'Email', type: 'webhook', config: {} });
-  return store;
+  return new Store(':memory:');
 }
 
 function add(store, name, type, extra = {}) {
@@ -29,7 +26,6 @@ function snapshot(store) {
   const edges = store.listEdges();
   const tags = new Map(store.listTags().map((t) => [t.id, `${t.name} ${t.color}`]));
   const tagMap = store.monitorTagMap();
-  const channels = new Map(store.listNotifications().map((n) => [n.id, n.name]));
   return monitors.map((m) => ({
     name: m.name,
     type: m.type,
@@ -38,7 +34,6 @@ function snapshot(store) {
     settings: [m.interval, m.retries, m.retryInterval, m.timeout, m.resendInterval, m.parentMode, m.active, m.description, m.icon],
     parents: edges.filter((e) => e.childId === m.id).map((e) => name.get(e.parentId)).sort(),
     tags: (tagMap.get(m.id) ?? []).map((t) => tags.get(t)),
-    notifications: store.monitorNotificationIds(m.id).map((id) => channels.get(id)).sort(),
     image: m.icon === 'upload' ? Buffer.from(store.getIcon(m.id).data).toString('hex') : null,
     pushToken: m.type === 'push' ? m.pushToken : null,
   })).sort((a, b) => `${a.name}${a.parents}`.localeCompare(`${b.name}${b.parents}`));
@@ -56,7 +51,6 @@ test('CSV survives commas, quotes, newlines and a BOM', () => {
 
 test('an export imports into a new install as the same monitors', () => {
   const src = freshStore();
-  const [phone, email] = src.listNotifications().sort((a, b) => a.id - b.id).map((n) => n.id);
   const wan = add(src, 'WAN', 'ping', { config: { host: '1.1.1.1' }, icon: 'builtin:globe', description: 'Fibre, "the good one"' });
   const router = add(src, 'Router | main', 'tcp', { config: { host: '192.168.1.1', port: '80' }, parentMode: 'any', retries: 3 });
   const site = add(src, 'Site', 'http', {
@@ -81,8 +75,6 @@ test('an export imports into a new install as the same monitors', () => {
   const media = src.createTag({ name: 'Media, etc', color: '#e879f9' });
   src.setMonitorTags(site, [home, media]);
   src.setMonitorTags(api2, [home]);
-  src.setMonitorNotifications(wan, [phone, email]);
-  src.setMonitorNotifications(router, []);
 
   const csv = exportCsv(src);
   const dst = freshStore();
@@ -155,7 +147,7 @@ test('update and skip modes match existing monitors by name', () => {
   assert.match(amb.errors[0].message, /2 existing monitors are called "WAN"/);
 });
 
-test('loops, unknown parents and unknown channels', () => {
+test('loops, unknown parents and the old notifications column', () => {
   const store = freshStore();
   const loop = importCsv(store, 'name,type,parents,host\nA,ping,B,a\nB,ping,A,b');
   assert.match(loop.errors[0].message, /loop/);
@@ -164,9 +156,9 @@ test('loops, unknown parents and unknown channels', () => {
   const warned = importCsv(store, 'name,type,host,notifications,url,bogus\nA,ping,a,Phone | Pager,https://x/,1');
   assert.equal(warned.ok, true);
   assert.deepEqual(warned.warnings.map((w) => w.message), [
+    'The "notifications" column is ignored: alerts now go out by notification rules (Notifications), which pick monitors by tag',
     'Unknown column "bogus" is ignored',
     'url doesn\'t apply to ping monitors and is ignored',
-    'There is no notification channel called "Pager"; skipped',
   ]);
 });
 

@@ -2,8 +2,9 @@ import { api, h, svg, toast, modal, confirmDialog, storage, store, STATUS_LABEL,
 import { FlowView, lineage } from './flow.js';
 import { iconEl } from './icons.js';
 import { heartbeatBar, responseChart } from './chart.js';
-import { renderMonitorForm, renderNotificationForm, iconChooser } from './forms.js';
-import { tagPill, colorPicker, newTagDialog, matchIcon, TAG_MATCH, tagIconView } from './tags.js';
+import { renderMonitorForm, iconChooser } from './forms.js';
+import { renderNotifications } from './notifications.js';
+import { tagPill, colorPicker, newTagDialog, matchIcon, matchToggle, tagExprEditor, TAG_MATCH, tagIconView } from './tags.js';
 import { parseTagExpr, exprName } from './filter.js';
 import { snmpSnapshot, snmpSummary, snmpSections, renderSnmpBrowser, mibLibraryCard } from './snmp.js';
 
@@ -308,7 +309,7 @@ function tagFilterControls(box, where) {
         },
       });
     }),
-    on && state.tags.length > 1 ? matchToggle() : null,
+    on && state.tags.length > 1 ? matchToggle(ui.tagMatch, (mode) => setTagFilter(ui.tagFilter, mode)) : null,
     on ? h('button', { class: 'linkish', onclick: () => setTagFilter([]) }, 'Clear') : null,
     h('button', { class: 'linkish', title: 'Combine tags with and, or and not', onclick: () => openExprEditor(where) }, 'Advanced'),
     h('a', { class: 'linkish', href: '#/tags' }, 'Manage'));
@@ -325,15 +326,6 @@ function openExprEditor(where = 'side') {
   input?.focus();
   input?.setSelectionRange(input.value.length, input.value.length);
 }
-
-// Operators the editor offers as buttons: [text, label, title].
-const EXPR_OPS = [
-  ['&', 'and', 'And: both sides must match'],
-  ['|', 'or', 'Or: either side may match'],
-  ['!', 'not', 'Not: everything except what follows'],
-  ['(', '(', 'Open a group (closed for you if you leave it open)'],
-  [')', ')', 'Close the group'],
-];
 
 // Back to the pills (the Falls' panel stays open).
 function closeExprEditor() {
@@ -365,98 +357,23 @@ function renderFallsFilter() {
   $('.falls-filter-btn')?.setAttribute('aria-expanded', String(!host.hidden));
 }
 
-// One line of text, checked as you type. Clicking a tag or an operator
-// inserts it at the cursor, so a filter can be built without typing.
-// Re-rendering an open editor (the 3s poll does) only rechecks it, so a
-// half-typed filter survives.
+// The advanced filter's editor (tagExprEditor in tags.js). Re-rendering an
+// open editor (the 3s poll does) only rechecks it, so a half-typed filter
+// survives.
 function exprEditor(box) {
   if (box.querySelector('.expr-editor')) return box.exprCheck?.();
-  const input = h('input', {
-    id: 'expr-input',
-    class: 'expr-input',
+  tagExprEditor(box, {
     value: ui.tagExpr || pillsExpr(),
-    placeholder: 'Switch & (Home | Cabin)',
-    spellcheck: false,
-    autocomplete: 'off',
-    'aria-label': 'Advanced tag filter',
-    'aria-describedby': 'expr-status',
-    oninput: () => check(),
-    onkeydown: (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        apply();
-      } else if (e.key === 'Escape') {
-        e.stopPropagation();
-        close();
-      }
+    tags: () => state.tags,
+    describe: (expr) => (expr ? `${state.monitors.filter((m) => expr.test(m.tags)).length} of ${state.monitors.length} monitors match.` : 'Empty: no filter.'),
+    applyLabel: 'Filter',
+    onApply: (text) => {
+      if (box.id === 'flow-filter-pop') ui.fallsFilter = false;
+      setTagExpr(text);
     },
+    onCancel: closeExprEditor,
+    example: 'shows the switches at either site.',
   });
-  const status = h('div', { id: 'expr-status', class: 'expr-status', 'aria-live': 'polite' });
-  const applyBtn = h('button', { type: 'button', class: 'btn small primary', onclick: () => apply() }, 'Filter');
-  const check = () => {
-    const expr = parseTagExpr(input.value, state.tags);
-    applyBtn.disabled = Boolean(expr?.error);
-    if (!expr) return fill(status, h('span', { class: 'muted' }, 'Empty: no filter.'));
-    if (expr.error) return fill(status, h('span', { class: 'expr-error' }, expr.error));
-    const n = state.monitors.filter((m) => expr.test(m.tags)).length;
-    fill(status, h('span', { class: 'muted' }, `${n} of ${state.monitors.length} monitors match.`));
-  };
-  const apply = () => {
-    const expr = parseTagExpr(input.value, state.tags);
-    if (expr?.error) return;
-    if (box.id === 'flow-filter-pop') ui.fallsFilter = false;
-    setTagExpr(expr ? input.value.trimEnd() + ')'.repeat(expr.unclosed) : '');
-  };
-  const close = closeExprEditor;
-  box.exprCheck = () => check();
-  // Spaces around & and |, none inside brackets or after !.
-  const insert = (token, op) => {
-    const { selectionStart, selectionEnd, value } = input;
-    let before = value.slice(0, selectionStart);
-    let text = op ? token : exprName(token);
-    if (op === ')') before = before.trimEnd();
-    else if (before && !/\s$/.test(before) && (op === '&' || op === '|' || !/[(!]$/.test(before))) text = ` ${text}`;
-    if (op === '&' || op === '|') text += ' ';
-    input.value = before + text + value.slice(selectionEnd);
-    const at = before.length + text.length;
-    input.focus();
-    input.setSelectionRange(at, at);
-    check();
-  };
-  fill(box,
-    h('div', { class: 'expr-editor' },
-      input,
-      h('div', { class: 'expr-row' }, status, applyBtn,
-        h('button', { type: 'button', class: 'btn small ghost', onclick: close }, 'Cancel')),
-      h('div', { class: 'expr-ops', role: 'group', 'aria-label': 'Insert an operator' }, EXPR_OPS.map(([op, label, title]) => h('button', {
-        type: 'button',
-        class: 'expr-op',
-        title,
-        'aria-label': title,
-        onclick: () => insert(op, op),
-      }, op === label ? op : [h('b', null, op), ` ${label}`]))),
-      h('div', { class: 'expr-tags' }, state.tags.map((t) => tagPill(t, {
-        title: `Insert ${t.name}`,
-        onclick: () => insert(t.name),
-      }))),
-      h('p', { class: 'expr-help' },
-        'Click operators and tags to build a filter, or type it. ',
-        'E.g. ', h('code', null, 'Switch & (Home | Cabin)'), ' shows the switches at either site.')));
-  check();
-}
-
-// Any of the tags (union) or all of them (intersection).
-function matchToggle() {
-  return h('span', { class: 'match-toggle', role: 'radiogroup', 'aria-label': 'Monitors must have' },
-    Object.entries(TAG_MATCH).map(([mode, { label, title }]) => h('button', {
-      type: 'button',
-      class: `match-btn${ui.tagMatch === mode ? ' on' : ''}`,
-      role: 'radio',
-      'aria-checked': String(ui.tagMatch === mode),
-      'aria-label': label,
-      title,
-      onclick: () => setTagFilter(ui.tagFilter, mode),
-    }, matchIcon(mode))));
 }
 
 function tagDots(m) {
@@ -1224,45 +1141,16 @@ async function renderAlerts() {
       h('div', { class: 'delivered' },
         a.delivered.length
           ? a.delivered.map((d) => h('span', { class: `chip ${d.ok ? 'ok' : 'fail'}`, title: d.error || 'Delivered' }, d.ok ? '✓ ' : '✗ ', d.name))
-          : h('span', { class: 'muted small' }, 'No notification channels on this monitor')))) : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No alerts yet. Calm waters.'))));
-}
-
-// ---- notifications ----------------------------------------------------------
-
-async function renderNotifications(editing) {
-  const [list, catalog] = await Promise.all([api('notifications'), api('notification-types')]);
-  const main = $('#main');
-  const formBox = h('div');
-  fill(main, h('div', { class: 'stack' },
-    h('div', { class: 'page-head' },
-      h('h1', null, 'Notifications'),
-      h('button', { class: 'btn primary', onclick: () => showForm(null) }, '+ Add channel')),
-    formBox,
-    list.length ? h('div', { class: 'notif-list' }, list.map((n) => h('div', { class: 'card notif' },
-      h('div', null,
-        h('h3', null, n.name),
-        h('div', { class: 'muted small' }, catalog[n.type]?.label ?? n.type, n.isDefault ? ' · default for new monitors' : '', n.active ? '' : ' · inactive')),
-      h('div', { class: 'actions' },
-        h('button', { class: 'btn', onclick: () => showForm(n) }, 'Edit'),
-        h('button', {
-          class: 'btn danger ghost',
-          onclick: () => confirmDialog(`Delete ${n.name}?`, 'Monitors using it will stop sending to it.', 'Delete', async () => {
-            await api(`notifications/${n.id}`, { method: 'DELETE' });
-            renderNotifications();
-          }),
-        }, 'Delete'))))) : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No channels yet. Home Assistant notify services work out of the box when running as an add-on.'))));
-
-  function showForm(n) {
-    renderNotificationForm(formBox, { catalog, existing: n, onDone: () => renderNotifications() });
-    formBox.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }
-  if (editing) showForm(null);
+          : h('span', { class: 'muted small' }, 'Not sent: no notification rule matched')))) : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No alerts yet. Calm waters.'))));
 }
 
 // ---- tags -------------------------------------------------------------------
 
 async function renderTags() {
-  const tags = await api('tags');
+  const [tags, rules] = await Promise.all([api('tags'), api('rules')]);
+  // Notification rules that pick monitors by this tag, by pill or by name in an expression.
+  const rulesUsing = (t) => rules.filter((r) => r.tagIds.includes(t.id)
+    || (r.tagExpr && parseTagExpr(r.tagExpr, tags.filter((x) => x.id !== t.id))?.error)).length;
   const reload = async () => {
     await refresh();
     if (ui.route?.name === 'tags') renderTags();
@@ -1308,7 +1196,8 @@ async function renderTags() {
         h('button', {
           class: 'btn small danger ghost',
           onclick: () => confirmDialog(`Delete ${t.name}?`,
-            t.count ? `It comes off ${t.count === 1 ? 'the 1 monitor' : `all ${t.count} monitors`} using it. The monitors themselves are not touched.` : 'No monitor uses it.',
+            [t.count ? `It comes off ${t.count === 1 ? 'the 1 monitor' : `all ${t.count} monitors`} using it. The monitors themselves are not touched.` : 'No monitor uses it.',
+              rulesUsing(t) ? ` ${rulesUsing(t) === 1 ? 'A notification rule picks' : `${rulesUsing(t)} notification rules pick`} monitors by it, so check Notifications afterwards: a rule left with none of its tags stops sending.` : ''].join(''),
             'Delete', async () => {
               await api(`tags/${t.id}`, { method: 'DELETE' });
               toast(`Deleted ${t.name}`, 'success');
@@ -1476,7 +1365,7 @@ function csvCard() {
 
   return h('section', { class: 'card csv-card' },
     h('h3', null, 'Import & export monitors'),
-    h('p', { class: 'muted' }, 'Move monitors to another install, or edit many at once in a spreadsheet. Exports and imports use the same columns, so an exported file imports as it is: hierarchy, settings, tags, icons and notification choices included. Notification channels themselves are not exported, since they hold passwords and tokens; create them on the new install first, with the same names.'),
+    h('p', { class: 'muted' }, 'Move monitors to another install, or edit many at once in a spreadsheet. Exports and imports use the same columns, so an exported file imports as it is: hierarchy, settings, tags and icons included. Notification channels and rules are not exported (channels hold passwords and tokens); set them up on the new install. Rules pick monitors by tag, so they apply to imported monitors straight away.'),
     h('div', { class: 'csv-downloads' },
       h('a', { class: 'btn primary', href: 'api/csv/export', download: '' }, 'Export all monitors (CSV)'),
       h('a', { class: 'btn', href: 'api/csv/template', download: '' }, 'Blank template'),
@@ -1502,7 +1391,7 @@ function csvCard() {
     h('details', { class: 'csv-ref', ontoggle: (e) => e.target.open && loadReference() },
       h('summary', null, 'Column reference'),
       h('p', { class: 'small' }, 'One row per monitor; the first row holds the column names. Only ', h('code', null, 'name'), ' is needed in every file, and columns can be in any order. ',
-        'Lists (parents, tags, notifications) are separated by ', h('code', null, '|'), '. A column that is missing keeps the current value (or the default, for new monitors); a column that is there but blank means the default. ',
+        'Lists (parents, tags) are separated by ', h('code', null, '|'), '. A column that is missing keeps the current value (or the default, for new monitors); a column that is there but blank means the default. ',
         h('a', { href: CSV_GUIDE, target: '_blank', rel: 'noopener' }, 'Full guide with examples on GitHub ↗')),
       reference));
 }
@@ -1551,7 +1440,7 @@ async function route() {
     else if (r.name === 'edit') await renderMonitorForm($('#main'), { state, id: r.id, navigate: go });
     else if (r.name === 'add') await renderMonitorForm($('#main'), { state, presetParent: r.parent, navigate: go });
     else if (r.name === 'alerts') await renderAlerts();
-    else if (r.name === 'notifications') await renderNotifications();
+    else if (r.name === 'notifications') await renderNotifications($('#main'), { state });
     else if (r.name === 'settings') await renderSettings();
     else if (r.name === 'tags') await renderTags();
   } catch (err) {

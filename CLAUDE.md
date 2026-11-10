@@ -31,12 +31,14 @@ waterfall_alert/             the add-on (Supervisor build context)
       js/app.js              router, polling, sidebar tree (drag/drop), views
       js/flow.js             SVG "falls" diagram, focus/lineage view, FLIP animation
       js/icons.js            built-in glyphs, iconEl() (HTML) / iconSvg() (inside the diagram)
-      js/tags.js             tag pill, colour picker, "new tag" dialog, tagIconView()
+      js/tags.js             tag pill, colour picker, "new tag" dialog, tagIconView(), matchToggle(), tagExprEditor() (shared by the filter and rules)
+      js/notifications.js    Notifications page: rule sentences with pickers, channels, problems
+      js/rules.js            notification rule matching (matchRules, ruleTagTest); imports only filter.js, so the engine imports it too
       js/snmp.js             SNMP snapshot cache, Falls summary, monitor-page sections (customize mode), All data browser, MIB library card
       js/snmp-names.js       vendor/group names by OID prefix, and a fallback name table (the server's MIBs come first)
       js/filter.js           tag filter expressions (parseTagExpr); no imports, so test/filter.test.js loads it under Node
       js/chart.js            heartbeat bar + response-time chart
-      js/forms.js            monitor + notification forms
+      js/forms.js            monitor + notification channel forms; the monitor form shows where its alerts go
       js/util.js             api(), h()/svg()/fill() DOM helpers, formatters
     test/engine.test.js      node:test scenarios for the hierarchy logic
     test/filter.test.js      tag filter expressions: precedence, not, quoting, error messages
@@ -47,6 +49,7 @@ waterfall_alert/             the add-on (Supervisor build context)
     test/fake-snmp.js        the fake UDP agent both SNMP tests use (not a test file itself)
     test/move.test.js        bulk move route: ride-along subtrees, from-parent semantics, rollback
     test/tags.test.js        tag routes through createApi(), with a real Store and Engine
+    test/rules.test.js       notification rules: routing in the engine, tag matching, routes, tag renames, the v7 migration
     test/transfer.test.js    CSV round trip into a fresh store, import modes, rollback on errors
 docs/csv.md                  user guide for the CSV format (linked from the Settings page)
 docs/docker.md               running without Home Assistant (Compose, backups, reverse proxy, networking)
@@ -76,7 +79,7 @@ To look at the UI: headless Chrome screenshots work (`--headless=new --virtual-t
 - **Gate**: `gateState(id)` looks at the parents. `parentMode: 'all'` (default) is blocked if any parent is down; `'any'` is blocked only if all parents are down. Groups and paused monitors are *pass-through*: they inherit their own gate and never block on their own.
 - **Check flow** (`#doCheck`): gate closed → record BLOCKED, no network call. Otherwise run the checker → retries (PENDING) → on confirmed failure, `#verifyUpstream` force-checks the parents first. If a parent is down the monitor becomes BLOCKED, if a parent is still retrying it stays PENDING, and only otherwise does it go DOWN, block its descendants, and send one alert listing them.
 - **Recovery**: an UP after DOWN/BLOCKED triggers `#cascade`, which immediately checks the BLOCKED children; they cascade further, one level at a time.
-- Alerts are dispatched to the **root-cause monitor's** channels only and logged in the `alerts` table.
+- Alerts are raised for the **root-cause monitor** only; notification rules pick the channels (see below). Every alert is logged in the `alerts` table, sent or not.
 - `check(id)` dedupes concurrent checks via `rt.inflight`. Fire-and-forget work goes through `#track()` so tests can `await engine.idle()`.
 - The engine takes injectable `checkers`, `notify`, `now`, `schedule` and `cancel`, so tests use fake checkers, a fake clock and no timers.
 - After any config change the API calls `engine.reload(changedIds)`, which rebuilds the graph and re-evaluates those monitors.
@@ -108,6 +111,15 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 - Built-in glyph keys are stored in the database, so never rename one in `public/js/icons.js`. Adding one is fine.
 - **Tag icons**: `tags.icon` holds the same kind of spec (`''` = no default, never `none`); an uploaded one lives in `tags.icon_data` and is served from `api/tags/:id/icon`. A monitor whose own spec is `''` takes the first tag (name order) with an icon, ahead of favicons: `tagIconSpecs()` builds that map in `IconCache.sync()`, and `#spec(m)` is what `wanted()`/`describe()` use. A tag image URL is cached per monitor like any URL; a tag upload becomes the internal spec `tag:<id>@<version>`. So **anything that changes tag icons or which monitors carry a tag must call `iconsChanged()`** in api.js. The form's icon picker is `iconChooser()` in forms.js, shared with the tag icon dialog. Tag icons are not part of the CSV.
 
+## Notification rules
+
+- `notification_rules(channel_ids, problem_ids, tag_ids, tag_match, tag_expr, downstream)` (JSON id lists) and `problems(kind, name, config)`. A rule reads "Alert <channels> when <problems> for <tags>": empty `problem_ids` = any problem, no tags = all monitors, `tag_expr` (filter.js syntax) replaces the pills when set. `downstream`: also fires when the monitor at fault is untagged but one of the monitors its alert lists (affected / resuming) matches.
+- `matchRules()` in `public/js/rules.js` is the only matching code; `#channelsFor()` in engine.js and the monitor form both call it. The engine imports it (and api.js imports filter.js) from `../public/js/`, which is why those two files must stay import-free apart from each other.
+- There is one problem so far, kind `down` (built in, id 1): it covers the down alert, reminders and the `up` alert; `config.recovery: false` stops resolved alerts. A new kind needs its own entry in `PROBLEM_KINDS` (notifications.js) and a place in the engine that dispatches it.
+- Safety rules: a rule never silently widens. Deleted tag ids stay in `tag_ids` (only live ones count; none live = matches nothing and the page shows it in red), a broken expression matches nothing, and renaming a tag rewrites expressions (`renameInExpr()` in the tag PUT route). Unknown channel and problem ids are dropped on save.
+- Rules only route alerts, so changing them needs no `engine.reload()`. They and channels are not in the CSV; an old file's `notifications` column is ignored with a warning.
+- Migration v7 is a function (a `MIGRATIONS` entry may be one): it turned the old `monitor_notifications` into rules (a channel on every monitor → an all-monitors rule; otherwise an `Alerts: <channels>` tag with a non-downstream rule) and dropped that table and `notifications.is_default`.
+
 ## Tags
 
 - `tags(id, name, color)` (names unique, case-insensitive) and `monitor_tags`. Tags have nothing to do with checking; they are display and filtering only, so tag changes call `engine.touch()`, not `reload()`.
@@ -120,7 +132,7 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 - `CSV_COLUMNS` drives the export, the import, the template, and the column reference on the Settings page (`GET api/csv/columns`). Adding a monitor type or config field means adding its column there **and** to `docs/csv.md`.
 - Export and import must stay symmetric: export → import into an empty store must reproduce the monitors (the round-trip test checks this). References use `key` (blank = name); exports fill `key` in only for shared names or names containing `|`.
 - `importCsv` runs everything inside `store.tx` and throws a private `Rollback` on any error or for `dryRun`, so the preview is exactly what an import would do. Icon uploads are returned (`uploads`) and saved by the route only after commit, because `IconCache` keeps in-memory metadata.
-- Missing column = keep (update) / default (new). Present but blank = default. Except: `parents`/`tags` blank = none, and `notifications` blank = default channels, `none` = none.
+- Missing column = keep (update) / default (new). Present but blank = default. Except: `parents`/`tags` blank = none.
 - `POST /api/csv/import` gets a 32 MB body limit (in server.js), since uploaded icons travel as data URLs.
 
 ## Falls diagram (flow.js)

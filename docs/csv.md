@@ -2,7 +2,7 @@
 
 Waterfall Alert can export every monitor to a CSV file and import monitors from one. Use it to:
 
-- **Move to a new install.** Export here, import there. The hierarchy, settings, tags, icons and notification choices all come along.
+- **Move to a new install.** Export here, import there. The hierarchy, settings, tags and icons all come along.
 - **Edit in bulk.** Export, change the file in a spreadsheet, and import it again with **Update** mode.
 - **Set up many monitors at once.** Start from the blank template or the example file.
 
@@ -23,9 +23,9 @@ Everything is under **Settings → Import & export monitors**. Exports and impor
 
 **Moving to a new install**
 
-1. On the new install, create your notification channels (**Notifications**) with the **same names** as on the old one. Channels are not exported, because they hold passwords and tokens.
-2. On the old install, go to **Settings → Import & export monitors → Export all monitors (CSV)**.
-3. On the new install, choose that file under **Import**, keep **Add every row as a new monitor**, check the summary, and press **Import**.
+1. On the old install, go to **Settings → Import & export monitors → Export all monitors (CSV)**.
+2. On the new install, choose that file under **Import**, keep **Add every row as a new monitor**, check the summary, and press **Import**.
+3. Set up your notification channels and rules (**Notifications**) on the new install. They are not exported (channels hold passwords and tokens). Rules pick monitors by tag, and the tags come with the file.
 
 **Editing many monitors at once**
 
@@ -38,7 +38,7 @@ Everything is under **Settings → Import & export monitors**. Exports and impor
 - One row per monitor. The first row holds the column names.
 - Columns can be in any order, and only `name` is needed in every file. Column names are not case-sensitive, and spaces count as underscores (`Retry Interval` = `retry_interval`). Unknown columns are ignored, with a warning.
 - Comma-separated, UTF-8. Values containing commas, quotes or line breaks must be in double quotes, with quotes inside doubled: `"Say ""hi"", please"`. Spreadsheet apps do this for you.
-- **Lists** (`parents`, `tags`, `notifications`) separate their items with `|`, e.g. `WAN | Router`. Spaces around the `|` don't matter.
+- **Lists** (`parents`, `tags`) separate their items with `|`, e.g. `WAN | Router`. Spaces around the `|` don't matter.
 - **True/false** columns accept `true`/`false`, `yes`/`no`, `1`/`0` or `on`/`off`.
 - Exports start with a byte-order mark and use Windows line endings, so Excel opens names with accents or emoji correctly. When saving from Excel, choose **CSV UTF-8**.
 
@@ -57,7 +57,7 @@ In update and skip mode, a name that more than one existing monitor uses can't b
 ## Blank cells and missing columns
 
 - **A column that isn't in the file** is left alone. Updated monitors keep their current value, and new monitors get the default.
-- **A column that is there but blank** means "the default": the default interval, no description, the automatic icon, and so on. For `parents` and `tags`, blank means none. For `notifications`, blank means the channels marked as default, and `none` means no channels.
+- **A column that is there but blank** means "the default": the default interval, no description, the automatic icon, and so on. For `parents` and `tags`, blank means none.
 
 So in update mode, include only the columns you want to change. A blank cell in an included column resets that setting.
 
@@ -106,7 +106,6 @@ These columns apply to every monitor type. The same reference, built from the im
 | `description` | text | | |
 | `icon` | see below | automatic | |
 | `tags` | list | none | See below. |
-| `notifications` | list, or `none` | default channels | See below. |
 
 Numbers outside a range are clamped to it, e.g. an interval of `5` becomes `10`.
 
@@ -133,11 +132,7 @@ Home #60a5fa | Media #e879f9 | Critical
 
 Tags that don't exist yet are created, with the given colour or the next preset colour. Tags that already exist keep their current colour. In an included `tags` column, the list replaces the monitor's tags, and a blank cell removes them all.
 
-### `notifications`
-
-Names of notification channels, separated by `|` (not case-sensitive), e.g. `Phone | Email`. A blank cell means the channels marked **Default for new monitors**, and `none` means no channels. Exports write `none` for monitors without any.
-
-Channels must already exist on the install you import into. A name that doesn't match one is skipped, with a warning.
+Which alerts a monitor sends where isn't a column: notification rules (**Notifications**) pick monitors by tag, so the `tags` column is how a monitor gets its alerts. Files from version 0.10 or earlier may have a `notifications` column; it is ignored, with a warning.
 
 ## Settings for each monitor type
 
@@ -218,7 +213,7 @@ Groups have no settings of their own.
 
 Choosing a file only **checks** it: the import runs without saving and shows what would happen ("7 to add · 2 to update · 1 new tag"), plus any problems with their line numbers. Nothing changes until you press **Import**.
 
-An import is all-or-nothing. If any row has an error, nothing is imported. Warnings, such as an unknown column or a missing notification channel, don't stop the import.
+An import is all-or-nothing. If any row has an error, nothing is imported. Warnings, such as an unknown column, don't stop the import.
 
 Typical errors:
 
@@ -235,7 +230,7 @@ Typical errors:
 ## What is not exported
 
 - **Heartbeat history, uptime and the alert log** stay on the old install.
-- **Notification channels** (they hold secrets). Recreate them with the same names.
+- **Notification channels and rules** (channels hold secrets). Set them up on the new install.
 - **Add-on settings**, such as heartbeat retention.
 
 Icons fetched automatically (favicons, Minecraft server icons) are not in the file either. The new install fetches them again.

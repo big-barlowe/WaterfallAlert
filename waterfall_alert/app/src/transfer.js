@@ -29,7 +29,6 @@ export const CSV_COLUMNS = [
   { name: 'description', field: 'description', help: 'Free text.' },
   { name: 'icon', field: 'icon', help: 'Blank = automatic, none, builtin:<name>, emoji:<emoji>, url:<image URL>, or a data:image/… URL (how exports carry uploaded icons).' },
   { name: 'tags', help: 'Tag names separated by |, each optionally followed by its colour: Home #60a5fa | Media. Tags that don’t exist yet are created.' },
-  { name: 'notifications', help: 'Notification channel names separated by |. Blank = the channels marked as default; none = no channels. Channels are not exported (they hold secrets), so create them first.' },
   { name: 'url', config: 'url', types: ['http'], required: ['http'], help: 'The URL to request.' },
   { name: 'method', config: 'method', types: ['http'], values: ['GET', 'HEAD', 'POST', 'PUT'], def: 'GET' },
   { name: 'accepted_codes', config: 'acceptedCodes', types: ['http'], def: '200-299', help: 'Status codes and ranges, e.g. 200-299,301.' },
@@ -79,7 +78,6 @@ export function exportCsv(store) {
   const graph = new Graph(monitors.map((m) => m.id), store.listEdges());
   const tagById = new Map(store.listTags().map((t) => [t.id, t]));
   const tagMap = store.monitorTagMap();
-  const channelName = new Map(store.listNotifications().map((n) => [n.id, n.name]));
 
   // A monitor's handle is its name, unless another monitor has the same name
   // or the name contains the list separator.
@@ -110,10 +108,6 @@ export function exportCsv(store) {
         return img ? `data:${img.mime};base64,${Buffer.from(img.data).toString('base64')}` : m.icon;
       }
       case 'tags': return joinList((tagMap.get(m.id) ?? []).map((t) => tagById.get(t)).map((t) => `${t.name} ${t.color}`));
-      case 'notifications': {
-        const names = store.monitorNotificationIds(m.id).map((id) => channelName.get(id)).filter(Boolean);
-        return names.length ? joinList(names) : 'none';
-      }
       case 'push_token': return m.type === 'push' ? m.pushToken ?? '' : '';
       default:
     }
@@ -169,7 +163,8 @@ export function importCsv(store, text, { mode = 'add', dryRun = false } = {}) {
   const header = records.shift();
   const cols = header.cells.map((h) => h.trim().toLowerCase().replace(/[\s-]+/g, '_'));
   cols.forEach((c, i) => {
-    if (c && !COLUMN.has(c)) warn(header.line, `Unknown column "${header.cells[i]}" is ignored`);
+    if (c === 'notifications') warn(header.line, 'The "notifications" column is ignored: alerts now go out by notification rules (Notifications), which pick monitors by tag');
+    else if (c && !COLUMN.has(c)) warn(header.line, `Unknown column "${header.cells[i]}" is ignored`);
     if (c && cols.indexOf(c) !== i) error(header.line, `The "${c}" column appears twice`);
   });
   if (!cols.includes('name')) error(header.line, 'There is no "name" column');
@@ -188,8 +183,6 @@ export function importCsv(store, text, { mode = 'add', dryRun = false } = {}) {
     store.tx(() => {
       const existing = new Map();
       for (const m of store.listMonitors()) existing.set(m.name, [...(existing.get(m.name) ?? []), m]);
-      const channels = new Map(store.listNotifications().map((n) => [n.name.toLowerCase(), n]));
-      const defaultChannels = store.listNotifications().filter((n) => n.isDefault).map((n) => n.id);
       const fileKeys = new Map();
       const fileNames = new Map();
 
@@ -292,20 +285,6 @@ export function importCsv(store, text, { mode = 'add', dryRun = false } = {}) {
           if (!/^[\w-]{8,64}$/.test(v.push_token)) warn(row.line, 'push_token should be 8–64 letters, digits, _ or -; a new one was generated');
           else if (owner && owner.id !== row.id) warn(row.line, `push_token is already used by "${owner.name}"; a new one was generated`);
           else store.setPushToken(row.id, v.push_token);
-        }
-
-        if (has('notifications') || !base) {
-          const raw = v.notifications ?? '';
-          let ids = defaultChannels;
-          if (raw.toLowerCase() === 'none') ids = [];
-          else if (raw) {
-            ids = splitList(raw).flatMap((n) => {
-              const ch = channels.get(n.toLowerCase());
-              if (!ch) warn(row.line, `There is no notification channel called "${n}"; skipped`);
-              return ch ? [ch.id] : [];
-            });
-          }
-          store.setMonitorNotifications(row.id, ids);
         }
 
         if (has('tags')) store.setMonitorTags(row.id, [...new Set(splitList(v.tags).map(tagFor))]);

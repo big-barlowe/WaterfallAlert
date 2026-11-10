@@ -26,6 +26,7 @@ function setup({ retries = 0 } = {}) {
   const checkers = { ping: fake, http: fake, tcp: fake };
 
   const notifId = store.createNotification({ name: 'phone', type: 'webhook', config: {} });
+  store.createRule({ channelIds: [notifId] }); // everything, for every monitor
   const ids = {};
   const add = (name, type, parents = [], extra = {}) => {
     const id = store.createMonitor({
@@ -33,7 +34,6 @@ function setup({ retries = 0 } = {}) {
       resendInterval: 0, parentMode: 'all', active: true, ...extra,
     });
     for (const p of parents) store.addEdge(ids[p], id);
-    store.setMonitorNotifications(id, [notifId]);
     ids[name] = id;
   };
   add('WAN', 'ping');

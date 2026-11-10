@@ -16,7 +16,7 @@ When a monitor fails:
 
 1. It retries `Retries before down` times, `Retry every` seconds apart.
 2. It then **re-checks its parents** before blaming itself. If a parent turns out to be down, the alert is raised on the parent instead.
-3. The down monitor sends **one alert** to its notification channels. The subject is `Alert: <name> is unreachable` (ping/TCP/DNS) or `Alert: <name> is down`, and the body lists every monitor that is now blocked beneath it.
+3. The down monitor sends **one alert** to the channels its notification rules pick (see [Notifications](#notifications)). The subject is `Alert: <name> is unreachable` (ping/TCP/DNS) or `Alert: <name> is down`, and the body lists every monitor that is now blocked beneath it.
 4. When it recovers you get `Resolved: <name> is back up`, and the monitors directly beneath it are re-checked immediately. Each of those then re-checks its own children, so recovery flows down one level at a time.
 
 After a restart, monitors that were already down don't alert again.
@@ -100,14 +100,31 @@ Favicons and image URLs are downloaded by the add-on and stored in its database,
 
 ## Notifications
 
-Add channels under **Notifications**. Each monitor chooses which channels it uses. Channels marked *default* are pre-selected for new monitors. Alerts go to the channels of the **monitor that is actually down**, i.e. the top of the affected branch.
+The **Notifications** page has three parts: rules, channels and problems.
+
+**Notification rules** decide who hears about what. They're listed as a table, one rule per row, which reads like a sentence: *Alert* [channels] *when* [problems] *for* [tags]. A cell too long for its column fades out at the edge; hover it to see everything. **+ Add rule** starts a new one, and the pencil at the end of a row opens that rule (the bin deletes it): click a cell to change it, then **Save** (or **Add**, for a new rule). Nothing changes until you save, and **×** drops the edits.
+
+- **Channels**: one or more of your channels.
+- **Problems**: *any problem*, or the ones you pick. For now there is one, *Monitor down* (see below).
+- **Tags**: *all monitors*, or the monitors with any (or all) of the tag pills you pick, just like the tag filter. **Advanced** takes an expression such as `Camera & !Cabin`, and renaming a tag updates the rules that use it.
+- **Upstream** (the checkbox column): a rule for some tags normally fires when a tagged monitor is the one at fault. With this ticked it also fires when an untagged monitor takes tagged ones down with it (say, the switch in front of your *Critical* NAS), and sends that alert, which lists them. It's on for new rules.
+
+An alert goes to every channel of every rule that matches it, once per channel. Alerts are still raised only for the **monitor that is actually down**, the top of the affected branch. A monitor's edit form shows where its alerts currently go. A rule that can't send anything (no channel, or its tags were deleted) gets a red edge; hover it to see why. With no rules, nothing is sent.
+
+**Channels** are where alerts are delivered:
 
 - **Home Assistant**: any `notify.*` service (e.g. `notify.mobile_app_pixel`), or `persistent_notification.create`. This works with no setup when running as an add-on.
 - **ntfy, Discord, Slack, Telegram, Pushover, Gotify, Webhook, Email (SMTP)**: fill in the fields and use **Send test**.
 
 The webhook channel POSTs JSON: `{ kind, title, message, time, monitor, affected: [{ id, name, depth }] }`.
 
+**Problems** are what a rule can alert about. There is one so far, built in:
+
+- **Monitor down**: a monitor fails its check (after its retries) while everything it depends on is up. One alert names it and lists every monitor cut off beneath it, reminders follow if the monitor has a reminder interval, and a resolved alert is sent when it comes back up. You can rename it, and turn the resolved alerts off.
+
 The **Alerts** page lists every alert that was sent and which channels delivered it.
+
+**Upgrading from 0.10 or earlier**, where each monitor had channel checkboxes, turns those choices into rules so the same alerts keep going to the same places. A channel every monitor used gets a rule for all monitors. A channel only some monitors used gets a tag on those monitors, named like *Alerts: Email*, and a rule for that tag. Tidy them up as you like.
 
 ## Monitor types
 
@@ -146,7 +163,7 @@ The UI is served through Home Assistant ingress (sidebar → **Waterfall**), whi
 
 **Settings → Import & export monitors** exports every monitor to a CSV file and imports monitors from one. Use it to move to a new install, to edit many monitors at once in a spreadsheet, or to set up a batch of monitors from the blank template or the example file.
 
-- Exports and imports use the same columns, so an export imports as it is. The hierarchy, settings, tags, icons and notification choices come along. Notification channels don't, because they hold secrets: create them on the new install first, with the same names.
+- Exports and imports use the same columns, so an export imports as it is. The hierarchy, settings, tags and icons come along. Notification channels and rules don't (channels hold secrets): set them up on the new install. Rules pick monitors by tag, so they work again once they exist.
 - When a name already exists, you choose: add a second monitor, update the existing one, or skip the row.
 - Choosing a file only checks it and shows what would change. Nothing is saved until you press **Import**, and a file with any error imports nothing.
 

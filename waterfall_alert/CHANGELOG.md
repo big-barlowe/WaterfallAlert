@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.11.0
+
+- **Notification rules.** Alerts are now set up on the **Notifications** page instead of with checkboxes on every monitor. Each rule reads *Alert* [channels] *when* [problems] *for* [tags], and you pick the tags with the same pills (any/all) and **Advanced** expressions as the tag filter. Rules are listed as a table, one row each, with edit and delete icons at the end of every row; edits only apply when you press **Save**. A rule can also fire when the fault is upstream of its tagged monitors, so a *Critical* rule hears about the switch that took a critical server down.
+- **Problems.** What a rule alerts about is now an object of its own. There is one for now, the built-in **Monitor down** (alert, reminders and resolved alert), which you can rename and whose resolved alerts you can turn off.
+- **Channels** are listed under the rules, each with how many rules send to it. A new channel can start with a rule that sends it everything. *Default for new monitors* is gone, since rules cover new monitors by their tags.
+- The monitor form shows where that monitor's alerts go, and updates as you change its tags. Deleting a tag warns when rules use it.
+- **Upgrading keeps your alerts going where they went.** A channel every monitor used becomes a rule for all monitors. A channel only some used gets a tag on those monitors (*Alerts: Email*) and a rule for it.
+- CSV: the `notifications` column is gone. Importing an older file with it still works; the column is ignored with a warning.
+
 ## 0.10.0
 
 - **SNMP values named from MIBs.** About 70 standard MIBs are built in, so **All data** names everything standard and shows values the way the MIB defines them: *up* instead of `1`, *41.5 degrees C*, *8022576 kB*, MAC addresses, dates, and the names of OID values (*hrStorageRam*). Click a name for its description, MIB, type, units and access.

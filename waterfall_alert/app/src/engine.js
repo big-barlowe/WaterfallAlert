@@ -1,6 +1,7 @@
 import { Graph } from './graph.js';
 import { DOWN, UP, PENDING, BLOCKED, STATUS_NAMES } from './status.js';
 import { log } from './config.js';
+import { matchRules } from '../public/js/rules.js';
 
 const BEAT_BUFFER = 60;
 // When a child fails we re-probe its parents, unless they were checked
@@ -435,9 +436,18 @@ export class Engine {
 
   // ---- alerts -------------------------------------------------------------
 
-  #channelsFor(monitorId) {
-    const ids = new Set(this.store.monitorNotificationIds(monitorId));
-    return this.store.listNotifications().filter((n) => n.active && ids.has(n.id));
+  // The channels the notification rules pick for this alert. Every kind of
+  // alert so far belongs to the built-in "down" problem: the alert and its
+  // reminders, and the resolved alert unless that problem has them off.
+  #channelsFor(m, kind, affected) {
+    const problem = this.store.listProblems().find((p) => p.kind === 'down');
+    if (!problem || (kind === 'up' && problem.config.recovery === false)) return [];
+    const tagMap = this.store.monitorTagMap();
+    const { channelIds } = matchRules(
+      { rules: this.store.listRules(), tags: this.store.listTags(), tagsOf: (id) => tagMap.get(id) ?? [] },
+      { problemId: problem.id, monitorId: m.id, affectedIds: affected.map((a) => a.id) },
+    );
+    return this.store.listNotifications().filter((n) => n.active && channelIds.has(n.id));
   }
 
   #formatTime(t) {
@@ -486,7 +496,7 @@ export class Engine {
 
   async #dispatch(m, kind, title, message, affected) {
     const time = this.now();
-    const channels = this.#channelsFor(m.id);
+    const channels = this.#channelsFor(m, kind, affected);
     const alert = {
       kind,
       title,
