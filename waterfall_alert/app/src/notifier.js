@@ -76,7 +76,7 @@ export const providers = {
     async send(cfg, a) {
       required(cfg, 'webhookUrl');
       await post(cfg.webhookUrl, {
-        username: 'Waterfall Alert',
+        username: 'BlueHole',
         embeds: [{
           title: a.title,
           description: '```\n' + a.message.slice(0, 3900) + '\n```',
@@ -170,7 +170,7 @@ export const providers = {
       { key: 'secure', label: 'Use TLS from the start (port 465)', type: 'checkbox' },
       { key: 'username', label: 'Username' },
       { key: 'password', label: 'Password', secret: true },
-      { key: 'from', label: 'From', placeholder: 'Waterfall Alert <alerts@example.com>' },
+      { key: 'from', label: 'From', placeholder: 'BlueHole <alerts@example.com>' },
       { key: 'to', label: 'To (comma separated)' },
     ],
     async send(cfg, a) {

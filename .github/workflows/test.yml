@@ -73,7 +73,7 @@ jobs:
             type=raw,value=${{ steps.version.outputs.minor }},enable=${{ steps.version.outputs.release }}
             type=raw,value=latest,enable=${{ steps.version.outputs.release }}
           labels: |
-            org.opencontainers.image.title=Waterfall Alert
+            org.opencontainers.image.title=BlueHole
             org.opencontainers.image.description=Hierarchical uptime monitoring with root-cause alerting
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
 

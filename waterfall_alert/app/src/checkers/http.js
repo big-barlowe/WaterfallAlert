@@ -25,7 +25,7 @@ export function request(url, opts, redirectsLeft = MAX_REDIRECTS) {
     const lib = u.protocol === 'https:' ? https : http;
     const req = lib.request(u, {
       method: opts.method,
-      headers: { 'User-Agent': 'WaterfallAlert/0.1', Accept: '*/*', ...opts.headers },
+      headers: { 'User-Agent': 'BlueHole/1.0', Accept: '*/*', ...opts.headers },
       rejectUnauthorized: !opts.ignoreTls,
       timeout: opts.timeoutMs,
     }, (res) => {

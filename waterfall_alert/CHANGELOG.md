@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.0
+
+- **Waterfall Alert is now BlueHole.** New name, logo (the add-on icon in Home Assistant and the browser tab icon) and header, with the stream in the header flowing like the streams in the Falls. The sidebar entry in Home Assistant is now *BlueHole*.
+- **The Falls' source is the blue hole**: the dot everything flows from is now the BlueHole node, whose rim and water warble like the edge of a pool.
+- Updating keeps everything: the add-on's id, the Docker image (`ghcr.io/big-barlowe/waterfall-alert`) and the repository address are unchanged, so it updates in place.
+
 ## 0.13.0
 
 - **Pick a value from All data.** Every row of a monitor's *All data* has **+ Problem**: choose the values that mean trouble (named from the MIB, with the value it has now underlined) or a number to compare with, and add it as a reading to a problem definition, or start a new definition from it with the monitor's tags filled in.

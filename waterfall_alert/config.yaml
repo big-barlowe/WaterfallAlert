@@ -1,5 +1,5 @@
-name: Waterfall Alert
-version: "0.13.0"
+name: BlueHole
+version: "0.14.0"
 slug: waterfall_alert
 description: Hierarchical uptime monitoring — one alert for the root cause, not twenty.
 url: https://github.com/big-barlowe/WaterfallAlert
@@ -11,8 +11,8 @@ boot: auto
 init: false
 ingress: true
 ingress_port: 8099
-panel_icon: mdi:waterfall
-panel_title: Waterfall
+panel_icon: mdi:water-circle
+panel_title: BlueHole
 homeassistant_api: true
 ports:
   8099/tcp: null

@@ -1,4 +1,6 @@
-# Waterfall Alert
+<p align="center"><img src="docs/brand/header.svg" alt="BlueHole" width="520"></p>
+
+# BlueHole
 
 Hierarchical uptime monitoring for Home Assistant, or on its own with Docker. It's as simple as Uptime Kuma, except it understands that **when the WAN is down, you don't need twenty alerts.**
 
@@ -39,13 +41,13 @@ Other affected monitors (3):
 
 ## Install
 
-Waterfall Alert runs as a Home Assistant add-on, or on its own on any machine with Docker.
+BlueHole runs as a Home Assistant add-on, or on its own on any machine with Docker.
 
 ### As a Home Assistant add-on
 
 1. In Home Assistant go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories**.
 2. Add `https://github.com/big-barlowe/WaterfallAlert`.
-3. Install **Waterfall Alert**, start it, and open **Waterfall** from the sidebar.
+3. Install **BlueHole**, start it, and open **BlueHole** from the sidebar.
 
 See [waterfall_alert/DOCS.md](waterfall_alert/DOCS.md) for configuration and usage details.
 

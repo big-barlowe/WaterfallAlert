@@ -83,7 +83,7 @@ function allowed(req, pathname) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
-  if (!allowed(req, url.pathname)) return send(res, 403, { error: 'Direct access is disabled; open Waterfall Alert from the Home Assistant sidebar.' });
+  if (!allowed(req, url.pathname)) return send(res, 403, { error: 'Direct access is disabled; open BlueHole from the Home Assistant sidebar.' });
   if (!url.pathname.startsWith('/api/')) return serveStatic(res, url.pathname);
   try {
     // CSV imports can carry uploaded icons as data URLs
@@ -101,7 +101,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(config.port, () => {
-  log.info(`Waterfall Alert listening on :${config.port} (data: ${config.dataDir}${isAddon ? ', Home Assistant add-on mode' : ''})`);
+  log.info(`BlueHole listening on :${config.port} (data: ${config.dataDir}${isAddon ? ', Home Assistant add-on mode' : ''})`);
   engine.start().catch((err) => log.error('Engine failed to start:', err));
   icons.sync(store.listMonitors());
   setInterval(() => icons.sync(store.listMonitors()), 6 * 3600 * 1000).unref();

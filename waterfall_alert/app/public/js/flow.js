@@ -432,6 +432,72 @@ function subline(m) {
 // the diagram, and it fits again whenever the focus or the set of shown
 // monitors changes. `height` is a height the user dragged the map to (null =
 // sized to the diagram).
+// ---- the source: the blue hole everything flows from -------------------------
+
+// docs/brand/node.svg: rim, water and core, centred on HOLE.c (in its own
+// 205-unit box) and drawn HOLE.scale times that size.
+const HOLE = {
+  c: [104, 106],
+  scale: 0.36,
+  rim: 'M162.999 155.053C125.999 180.553 90.4989 172.285 70.9989 167.553C43.9989 161.002 3.49887 125.053 41.4988 72.0532C92.196 1.34393 144.999 49.9701 150.499 54.5532C156.499 59.5532 203.671 127.022 162.999 155.053Z',
+  water: 'M149.482 143.61C120.774 163.466 93.2302 157.027 78.1003 153.343C57.1512 148.241 25.7277 120.249 55.2115 78.9797C94.5469 23.9202 135.516 61.7842 139.784 65.3529C144.439 69.2463 181.04 121.782 149.482 143.61Z',
+  core: 'M128.847 128.367C112.684 139.398 97.1761 135.822 88.6576 133.775C76.8627 130.94 59.1705 115.389 75.7706 92.4617C97.9175 61.8731 120.984 82.9086 123.387 84.8912C126.008 87.0542 146.615 116.241 128.847 128.367Z',
+};
+
+// Frames of a path whose edge warbles: every point (control points too, so
+// the curves stay smooth) is pushed in or out from the centre by two waves
+// running around it. One full turn of the phase, so the last frame is the first.
+function warbleFrames(d, { amp, lobes: [k1, k2], dir = 1, frames = 12 }) {
+  const [cx, cy] = HOLE.c;
+  const nums = d.match(/-?\d*\.?\d+(?:e-?\d+)?/g).map(Number);
+  const cmds = d.match(/[MCZ]/g);
+  const out = [];
+  for (let f = 0; f <= frames; f++) {
+    const phase = (dir * 2 * Math.PI * f) / frames;
+    const moved = [];
+    for (let i = 0; i < nums.length; i += 2) {
+      const dx = nums[i] - cx;
+      const dy = nums[i + 1] - cy;
+      const t = Math.atan2(dy, dx);
+      const k = 1 + amp * (0.65 * Math.sin(k1 * t + phase) + 0.35 * Math.sin(k2 * t - 2 * phase));
+      moved.push((cx + dx * k).toFixed(2), (cy + dy * k).toFixed(2));
+    }
+    // M x y, then C with three points each, then Z
+    let j = 0;
+    out.push(cmds.map((c) => {
+      if (c === 'Z') return 'Z';
+      const n = c === 'M' ? 2 : 6;
+      const part = moved.slice(j, j + n);
+      j += n;
+      return `${c}${part.join(' ')}`;
+    }).join(''));
+  }
+  return out.join(';');
+}
+
+const STILL = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+let holeFrames = null;
+
+function blueHole(x, y) {
+  const [cx, cy] = HOLE.c;
+  const s = HOLE.scale;
+  holeFrames ??= {
+    rim: warbleFrames(HOLE.rim, { amp: 0.07, lobes: [3, 5] }),
+    water: warbleFrames(HOLE.water, { amp: 0.06, lobes: [2, 4], dir: -1 }),
+  };
+  // SMIL, since CSS can't animate a path's shape everywhere; it's one element
+  const warble = (frames, dur) => (STILL ? null : svg('animate', { attributeName: 'd', values: frames, dur, repeatCount: 'indefinite' }));
+  const at = { transform: `translate(${x - cx * s} ${y - cy * s}) scale(${s})` };
+  // The rim goes under the streams and the water over them, so the streams
+  // seem to come out of the water.
+  return {
+    under: svg('g', { class: 'source source-rim', ...at }, svg('path', { class: 'hole-rim', d: HOLE.rim }, warble(holeFrames.rim, '7s'))),
+    over: svg('g', { class: 'source', ...at },
+      svg('path', { class: 'hole-water', d: HOLE.water }, warble(holeFrames.water, '5s')),
+      svg('path', { class: 'hole-core', d: HOLE.core })),
+  };
+}
+
 export class FlowView {
   constructor(container, { onSelect, onExpand, onClear, onToggle, onMarquee, onLayout, view, height = null, layout = 'tree' }) {
     this.userH = height;
@@ -664,11 +730,9 @@ export class FlowView {
       this.nodeEls.set(m.id, { g, inner, pool, title, sub, role, tags: m.tagList ?? [], s: scale });
     }
 
-    const source = svg('g', { class: 'source' },
-      svg('circle', { cx: srcX, cy: srcY, r: 10, class: 'spring' }),
-      svg('circle', { cx: srcX, cy: srcY, r: 10, class: 'spring-ring' }));
+    const hole = blueHole(srcX, srcY);
 
-    this.viewEl = svg('g', { class: 'viewport' }, edges, nodes, source);
+    this.viewEl = svg('g', { class: 'viewport' }, hole.under, edges, nodes, hole.over);
     const root = svg('svg', {
       class: `flow-svg layout-${this.mode}${focus != null ? ' focusing' : ''}`,
       role: 'group',

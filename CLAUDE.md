@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-Waterfall Alert is a Home Assistant add-on for hierarchical uptime monitoring (Uptime Kuma-style, but monitors form a DAG and a failure sends one root-cause alert listing everything downstream).
+BlueHole (formerly Waterfall Alert) is a Home Assistant add-on for hierarchical uptime monitoring (Uptime Kuma-style, but monitors form a DAG and a failure sends one root-cause alert listing everything downstream).
+
+**Names:** only user-facing text says BlueHole. The add-on slug (`waterfall_alert`, also the directory), the image `ghcr.io/big-barlowe/waterfall-alert`, the repo URL, `package.json`'s name and the `waterfall:` localStorage keys keep the old name on purpose: changing the slug makes Home Assistant treat it as a new add-on (no data), and the image name is in people's compose files.
 
 ## Layout
 
@@ -55,6 +57,7 @@ waterfall_alert/             the add-on (Supervisor build context)
     test/problems.test.js    value problems: readings, open/resolve alerts by severity, checks in a row, restarts, routes, SNMP probe
     test/transfer.test.js    CSV round trip into a fresh store, import modes, rollback on errors
 docs/csv.md                  user guide for the CSV format (linked from the Settings page)
+docs/brand/                  logo.svg, node.svg, header.svg: the originals. icon.png/logo.png (add-on) and public/favicon.* are rendered from logo.svg; the header mark (index.html) and the Falls source (`blueHole()` in flow.js) are built from header.svg/node.svg
 docs/docker.md               running without Home Assistant (Compose, backups, reverse proxy, networking)
 ```
 
@@ -153,6 +156,7 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 - The selection bar sits *below* the diagram and is sticky, so showing it never moves the nodes (it used to be above, and the jump made box-selecting a second time miss).
 - On a rebuild, surviving nodes FLIP from their old screen position. They are positioned via the outer `g`'s `transform` attribute and animated via CSS transforms on the inner `.node-inner`, because a CSS transform on the outer one would override the attribute.
 - Focus state lives in `ui.focus`/`ui.info` in app.js and is mirrored into the hash with `history.replaceState`. A real hash change would re-route and rebuild the diagram without the animation.
+- **The source** is `blueHole()`: node.svg's rim, water and core at `HOLE.scale`, centred on `HOLE.c`. The rim and water warble through SMIL `<animate attributeName="d">` frames from `warbleFrames()` (every point pushed in/out by two waves around the centre; CSS can't animate `d` in every browser). SMIL ignores the `.calm`/`.offscreen` CSS, which is fine for one element; it's left out under `prefers-reduced-motion`.
 - **Performance** (it has to cope with hundreds of monitors): streams have no filter (a blur per animated stream, over the whole diagram, was most of every frame; the wide `.bed` stroke is the glow), and `#glow-box` is only for single elements. `#apply()` sets `lod-far` below `LOD.details` zoom (hides the subline, tags, sparkles; names and animation stay). `#cull()` (throttled) marks streams and nodes outside the view `.offscreen` so they don't animate (`#paint` must keep that class), and sets `.calm` (no animation) when more than `LOD.animate` streams are on screen. Measured on 200 monitors, animation at every zoom and while panning holds 60 fps once the filter is gone, so don't bring back zoom-based animation cut-offs or pausing during moves without measuring.
 
 ## Conventions

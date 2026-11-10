@@ -194,7 +194,7 @@ export function iconChooser({ id, label = 'Icon', spec = '', modes, current = nu
         },
         onchange: refresh,
       });
-      help = 'Waterfall Alert downloads and caches the image, so the browser never has to reach that site. The dashboard-icons project has logos for most self-hosted apps.';
+      help = 'BlueHole downloads and caches the image, so the browser never has to reach that site. The dashboard-icons project has logos for most self-hosted apps.';
     } else if (mode === 'upload') {
       controls = h('input', {
         type: 'file',
@@ -320,7 +320,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       const t = tagIcon();
       if (t) return `Uses the icon of its ${t.name} tag. Change it on the Tags page.`;
       return draft.type === 'http'
-        ? 'Uses the website’s favicon (unless one of its tags has an icon). Waterfall Alert fetches it after you save, and re-checks it weekly.'
+        ? 'Uses the website’s favicon (unless one of its tags has an icon). BlueHole fetches it after you save, and re-checks it weekly.'
         : draft.type === 'minecraft' ? 'Uses the server’s own icon (the one in the multiplayer list), fetched after you save.'
           : draft.type === 'group' ? 'Groups show a folder.' : 'Uses the icon of the first of its tags that has one. Otherwise HTTP monitors show the website’s favicon, Minecraft servers their server icon, and groups a folder.';
     },
@@ -337,7 +337,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
       h('label', null, 'Push URL'),
       h('code', null, `${url}?status=up&msg=OK&ping=`),
       h('small', null, info.addon
-        ? 'Map the add-on port under Settings → Add-ons → Waterfall Alert → Network to make this reachable. Add ?status=down to report a failure.'
+        ? 'Map the add-on port under Settings → Add-ons → BlueHole → Network to make this reachable. Add ?status=down to report a failure.'
         : 'Whatever sends the pushes must be able to reach this address. Add ?status=down to report a failure.'));
   };
 

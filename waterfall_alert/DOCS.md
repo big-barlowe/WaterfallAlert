@@ -1,4 +1,4 @@
-# Waterfall Alert
+# BlueHole
 
 ## How checking works
 
@@ -182,7 +182,7 @@ A vendor MIB usually imports others from the same vendor (often `<VENDOR>-SMI` o
 
 ### Push monitors and the network port
 
-The UI is served through Home Assistant ingress (sidebar → **Waterfall**), which handles authentication. Push monitors need to be reachable by whatever sends the push, so map a host port under **Network**. With `allow_direct_access: false` (the default), only `/api/push/…` is reachable on that port.
+The UI is served through Home Assistant ingress (sidebar → **BlueHole**), which handles authentication. Push monitors need to be reachable by whatever sends the push, so map a host port under **Network**. With `allow_direct_access: false` (the default), only `/api/push/…` is reachable on that port.
 
 ## Import and export (CSV)
 
