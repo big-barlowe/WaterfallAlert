@@ -21,7 +21,7 @@ Other affected monitors (3):
 - Service 2.2
 ```
 
-![The Falls dashboard](docs/screenshot.png)
+![The Falls in the rings layout: the blue hole at the centre, streams flowing out to every monitor, one switch down with its devices blocked, and a UPS on battery](docs/screenshot.png)
 
 ## Features
 
