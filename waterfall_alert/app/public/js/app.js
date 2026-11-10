@@ -5,7 +5,7 @@ import { heartbeatBar, responseChart } from './chart.js';
 import { renderMonitorForm, renderNotificationForm, iconChooser } from './forms.js';
 import { tagPill, colorPicker, newTagDialog, matchIcon, TAG_MATCH, tagIconView } from './tags.js';
 import { parseTagExpr, exprName } from './filter.js';
-import { snmpSnapshot, snmpSummary, snmpSections, renderSnmpBrowser } from './snmp.js';
+import { snmpSnapshot, snmpSummary, snmpSections, renderSnmpBrowser, mibLibraryCard } from './snmp.js';
 
 const POLL_MS = 3000;
 const $ = (sel) => document.querySelector(sel);
@@ -1382,6 +1382,7 @@ async function renderSettings() {
     h('div', { class: 'field' }, h('label', { for: 's-ret' }, 'Keep heartbeat history for (days)'), retention),
     h('div', { class: 'form-actions' }, h('button', { class: 'btn primary', type: 'submit' }, 'Save'))),
     csvCard(),
+    mibLibraryCard(),
     h('div', { class: 'card' },
       h('h3', null, 'About'),
       h('p', null, `Waterfall Alert ${info.version}${info.addon ? ' · running as a Home Assistant add-on' : ' · standalone'}`),

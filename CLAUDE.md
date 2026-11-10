@@ -18,6 +18,8 @@ waterfall_alert/             the add-on (Supervisor build context)
     src/transfer.js          CSV export/import of monitors (CSV_COLUMNS is the single column definition)
     src/csv.js               RFC 4180 parse/write
     src/snmp.js              SNMP v1/v2c client (BER, GET, GETBULK/GETNEXT walks over UDP); no dependency
+    src/mib.js               MIB (SMI) parser, MibLibrary (OID -> name/type/units/desc), formatValue(), display hints
+    mibs/                    bundled standard MIB modules (IETF/IANA, net-snmp, IEEE LLDP), parsed at startup
     src/engine.js            scheduler + hierarchy logic (the core; read this first)
     src/graph.js             DAG helpers: ancestors/descendants, levels, cycles, subtree
     src/db.js                node:sqlite Store, migrations (PRAGMA user_version)
@@ -30,8 +32,8 @@ waterfall_alert/             the add-on (Supervisor build context)
       js/flow.js             SVG "falls" diagram, focus/lineage view, FLIP animation
       js/icons.js            built-in glyphs, iconEl() (HTML) / iconSvg() (inside the diagram)
       js/tags.js             tag pill, colour picker, "new tag" dialog, tagIconView()
-      js/snmp.js             SNMP snapshot cache, Falls summary, monitor-page sections (customize mode), All data browser
-      js/snmp-names.js       readable names and groups for common OIDs (browser only)
+      js/snmp.js             SNMP snapshot cache, Falls summary, monitor-page sections (customize mode), All data browser, MIB library card
+      js/snmp-names.js       vendor/group names by OID prefix, and a fallback name table (the server's MIBs come first)
       js/filter.js           tag filter expressions (parseTagExpr); no imports, so test/filter.test.js loads it under Node
       js/chart.js            heartbeat bar + response-time chart
       js/forms.js            monitor + notification forms
@@ -41,6 +43,8 @@ waterfall_alert/             the add-on (Supervisor build context)
     test/icons.test.js       favicon discovery and icon cache, with a fake `request`
     test/minecraft.test.js   Server List Ping against a fake server, SRV resolution
     test/snmp.test.js        BER round trip, checker against a fake agent (v1/v2c, tooBig, community), rates, engine data
+    test/mib.test.js         MIB parsing/resolution, display hints, upload routes naming walk entries and card values
+    test/fake-snmp.js        the fake UDP agent both SNMP tests use (not a test file itself)
     test/move.test.js        bulk move route: ride-along subtrees, from-parent semantics, rollback
     test/tags.test.js        tag routes through createApi(), with a real Store and Engine
     test/transfer.test.js    CSV round trip into a fresh store, import modes, rollback on errors
@@ -87,6 +91,13 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 - **Display settings** are config keys `oids`, `hide` (e.g. `fact:contact`, `if:<name>`, `res:<name>`, `section:<name>`) and `card` (≤ `CARD_MAX` keys: `name`, `uptime`, `ifs`, `cpu`, `memory`, `disk:<name>`, `if:<name>`, `value:<oid>`). They are `DISPLAY_KEYS`: changing them never clears the snapshot. `PUT api/monitors/:id/snmp-display` saves them and reloads the monitor, because the card text is the check's `msg` (`cardText()` in checkers/snmp.js), which `subline()` in flow.js shows for SNMP cards. `GET api/monitors/:id/snmp/walk?start=` returns a page of a live walk of the whole tree for the browser (`#/monitor/:id/snmp`).
 - `GET api/monitors/:id/data` → `{ at, data, display }`. It is not in `/api/state` (too big); the frontend fetches it through `snmpSnapshot(id, lastCheck, onLoad)` in `public/js/snmp.js`, which refetches only when the monitor's `lastCheck` changes.
 - The SNMP checker's uptime test is the system-group GET (half the timeout per try, one retry). Everything else (IF-MIB ifTable/ifXTable columns, HOST-RESOURCES CPU and storage, UCD ssCpuIdle as a CPU fallback, the `oids` config) is best effort within a deadline; failures go into `data.notes`. Rates come from `previous` (32-bit wrap handled, reboots and 64-bit resets skipped).
+
+## MIBs (mib.js)
+
+- `parseMib(text)` → modules `{ name, imports, defs, types }`; it is a lenient SMIv1/v2 subset (comments run to end of line, MACRO bodies skipped, a SYNTAX is parsed as a type so a TEXTUAL-CONVENTION ends where its SYNTAX does). `MibLibrary.compile()` resolves OIDs across modules through imports, falling back to any module that defines the name and then to well-known roots; uploaded modules outrank bundled ones, RFC1213-MIB ranks lowest.
+- `label(oid)` names an instance only from an object with a SYNTAX (or an exact match), so vendor OIDs under nothing but `enterprises` stay unnamed; `near(oid)` gives the subtree to look up instead. `formatValue(entry, vb)` → `{ text, raw? }` (enums, BITS, integer `d-N` hints, RFC 2579 octet hints, DateAndTime, units, OID values by name).
+- The current library is a module singleton (`mibLibrary()` / `setMibLibrary()`). `createApi()` builds it from the bundled files plus the `mibs` table (one row per module; a file with several modules is split with `splitModules()`), and the MIB routes (`GET/POST api/mibs`, `DELETE api/mibs/:name`) rebuild it and `engine.reload()` the SNMP monitors so card text follows. `POST api/mibs` has the 32 MB body limit.
+- The walk route (`snmpBrowse`) sends per entry `name`, `text`, `raw`, `obj` (key into the page's `objects`: module, type, units, access, desc) or `near`; custom values in snapshots carry `text`. Lookup links (oidref.com, mibs.observium.org) are plain links the user clicks; the server never contacts them. MIBs are not part of the CSV.
 
 ## Icons
 

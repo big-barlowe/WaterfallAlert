@@ -87,7 +87,7 @@ const server = http.createServer(async (req, res) => {
   if (!url.pathname.startsWith('/api/')) return serveStatic(res, url.pathname);
   try {
     // CSV imports can carry uploaded icons as data URLs
-    const body = req.method === 'GET' ? null : await readBody(req, url.pathname === '/api/csv/import' ? 32 * 1024 * 1024 : 1024 * 1024);
+    const body = req.method === 'GET' ? null : await readBody(req, ['/api/csv/import', '/api/mibs'].includes(url.pathname) ? 32 * 1024 * 1024 : 1024 * 1024);
     const out = await api(req, url, body);
     if (out instanceof RawResponse) {
       res.writeHead(200, { 'Content-Type': out.type, ...out.headers });

@@ -706,6 +706,36 @@ button.tag-pill:hover { border-color: var(--tag); background: color-mix(in srgb,
 .snmp-walk .snmp-value { font-size: 0.82rem; overflow-wrap: break-word; }
 .snmp-pinned { background: rgba(56, 189, 248, 0.06); }
 .snmp-more { display: flex; justify-content: center; padding-top: 12px; }
+.snmp-obj-btn { font-size: inherit; font-weight: 500; padding: 0; color: var(--text); text-align: left; text-decoration: underline dotted var(--faint); text-underline-offset: 3px; overflow-wrap: anywhere; }
+.snmp-obj-btn:hover, .snmp-open .snmp-obj-btn { color: var(--foam); }
+.snmp-raw { font-size: 0.76rem; }
+.snmp-open td { border-bottom-color: transparent !important; }
+.snmp-detail-row td { padding: 2px 10px 12px !important; background: rgba(56, 189, 248, 0.04); }
+.snmp-obj { display: flex; flex-wrap: wrap; gap: 4px 22px; margin: 0 0 6px; font-size: 0.8rem; }
+.snmp-obj dt { display: inline; color: var(--faint); margin-right: 6px; }
+.snmp-obj dd { display: inline; margin: 0; }
+.snmp-desc { margin: 0; max-width: 78ch; color: var(--muted); font-size: 0.82rem; white-space: pre-line; }
+.snmp-lookup { color: inherit; text-decoration: underline dotted; text-underline-offset: 2px; }
+.snmp-lookup:hover { color: var(--water); }
+.snmp-ext { color: var(--water); white-space: nowrap; }
+.snmp-unknown { margin: 0 0 14px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel); font-size: 0.85rem; }
+.snmp-unknown p { margin: 0 0 6px; }
+.snmp-unknown ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.snmp-unknown .mono { font-family: var(--mono); font-size: 0.8rem; }
+.snmp-browser .actions { flex-wrap: wrap; }
+.mib-needed { margin: 0 0 14px; padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(253, 186, 116, 0.45); background: rgba(253, 186, 116, 0.07); font-size: 0.84rem; }
+.mib-needed code { font-family: var(--mono); font-size: 0.8rem; }
+.mib-card .mib-body { display: flex; flex-direction: column; gap: 12px; }
+.mib-card .mib-needed { margin: 0; }
+table.mib-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.mib-table th { text-align: left; color: var(--faint); font-weight: 500; font-size: 0.76rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.mib-table td { padding: 7px 10px; border-bottom: 1px solid rgba(25, 64, 95, 0.5); vertical-align: top; }
+.mib-table tr:last-child td { border-bottom: 0; }
+.mib-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.mib-name { font-weight: 500; font-family: var(--mono); font-size: 0.84rem; }
+.mib-warn { color: #fdba74; font-size: 0.78rem; }
+.mib-builtin summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+.mib-builtin p { margin: 8px 0 0; line-height: 1.9; }
 .snmp-grid .mono { font-family: var(--mono); font-size: 0.85rem; }
 .snmp-notes { margin: 12px 0 0; padding-left: 18px; color: #fdba74; font-size: 0.8rem; }
 table.snmp-ifs, table.snmp-values { width: 100%; border-collapse: collapse; font-size: 0.86rem; }

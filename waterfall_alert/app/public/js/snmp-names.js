@@ -1,6 +1,6 @@
-// Readable names for common OIDs, for the SNMP "All data" view. Not a MIB
-// compiler: the objects people usually look for, plus group names and the
-// big vendors' enterprise numbers. Anything else shows as its numeric OID.
+// For the SNMP "All data" view: group names by OID prefix (standard groups
+// and the big vendors' enterprise numbers), and a few common objects as a
+// fallback. Names normally come from the server's MIB library.
 
 const cols = (base, names) => Object.fromEntries(names.map((n, i) => (n ? [`${base}.${i + 1}`, n] : null)).filter(Boolean));
 

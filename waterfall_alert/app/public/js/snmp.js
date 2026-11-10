@@ -3,7 +3,7 @@
 // "All data" browser (renderSnmpBrowser). How it is shown (extra OIDs,
 // hidden items, what the Falls card says) is the monitor's `display`, saved
 // with PUT api/monitors/:id/snmp-display.
-import { api, h, fill, fmtAgo, toast } from './util.js';
+import { api, h, fill, fmtAgo, toast, confirmDialog } from './util.js';
 import { oidName, oidGroup } from './snmp-names.js';
 
 export const CARD_MAX = 2;
@@ -270,7 +270,7 @@ export function snmpSections(m, snap, opts) {
     h('div', { class: 'table-scroll' }, h('table', { class: 'snmp-values' },
       h('tbody', null, d.custom.map((c) => h('tr', null,
         h('td', null, c.label),
-        h('td', { class: 'snmp-value' }, c.value == null ? h('span', { class: 'muted' }, c.type === 'error' ? 'error' : 'not available') : String(c.value)),
+        h('td', { class: 'snmp-value' }, c.value == null ? h('span', { class: 'muted' }, c.type === 'error' ? 'error' : 'not available') : String(c.text ?? c.value)),
         h('td', { class: 'mono muted small' }, c.oid),
         editing ? h('td', { class: 'snmp-row-ctls' }, h('span', { class: 'snmp-ctls' },
           cardBtn(`value:${c.oid}`),
@@ -279,12 +279,104 @@ export function snmpSections(m, snap, opts) {
   return [device, interfaces, resources, custom];
 }
 
+// ---- MIB library ------------------------------------------------------------
+
+// Lookup sites for an OID nothing here describes. Opened by the user, in a
+// new tab; nothing is sent anywhere on its own.
+const OIDREF = (oid) => `https://oidref.com/${oid}`;
+const OBSERVIUM = (oid) => `https://mibs.observium.org/?q=.${oid}`;
+const ext = (href, text, title) => h('a', { class: 'snmp-ext', href, target: '_blank', rel: 'noopener noreferrer', title }, text, ' ↗');
+
+// Uploads MIB files (a FileList or array). Returns the server's answer
+// ({ added, errors, modules }) or null.
+export async function uploadMibs(files) {
+  if (!files.length) return null;
+  try {
+    const payload = await Promise.all([...files].map(async (f) => ({ filename: f.name, text: await f.text() })));
+    const r = await api('mibs', { method: 'POST', body: { files: payload } });
+    if (r.added.length) toast(`Added ${r.added.map((a) => a.name).join(', ')}`, 'success');
+    for (const e of r.errors) toast(`${e.filename}: ${e.error}`, 'error');
+    return r;
+  } catch (err) {
+    toast(err.message, 'error');
+    return null;
+  }
+}
+
+// Modules just added that import modules nobody has.
+const stillNeeded = (r) => [...new Set(r.modules.filter((m) => r.added.some((a) => a.name === m.name)).flatMap((m) => m.missing))].sort();
+
+function uploadButton(onDone, { label = 'Add MIB files…', cls = 'btn' } = {}) {
+  const input = h('input', {
+    type: 'file',
+    multiple: true,
+    hidden: true,
+    onchange: async () => {
+      const r = await uploadMibs(input.files);
+      input.value = '';
+      if (r) onDone(r);
+    },
+  });
+  return h('span', { class: 'mib-upload' }, input, h('button', { class: cls, type: 'button', onclick: () => input.click() }, label));
+}
+
+function neededNote(missing) {
+  return missing.length ? h('p', { class: 'mib-needed' },
+    h('strong', null, 'Also needed: '), missing.map((m, i) => [i ? ', ' : '', h('code', null, m)]),
+    '. These are imported by what you added; until they are here, some of its objects can’t be placed.') : null;
+}
+
+// The Settings card: uploaded modules, upload, and the built-in list.
+export function mibLibraryCard() {
+  const body = h('div', { class: 'mib-body' }, h('p', { class: 'muted' }, 'Loading…'));
+  let missing = [];
+  const render = (modules) => {
+    const mine = modules.filter((m) => m.source === 'uploaded');
+    const bundled = modules.filter((m) => m.source === 'bundled');
+    const remove = (m) => confirmDialog(`Remove ${m.name}?`, 'Values it names show as numbers again. You can add it back at any time.', 'Remove', async () => {
+      try {
+        render((await api(`mibs/${encodeURIComponent(m.name)}`, { method: 'DELETE' })).modules);
+      } catch (err) {
+        toast(err.message, 'error');
+        return false;
+      }
+    });
+    fill(body,
+      mine.length ? h('div', { class: 'table-scroll' }, h('table', { class: 'mib-table' },
+        h('thead', null, h('tr', null, h('th', null, 'Module'), h('th', null, 'File'), h('th', { class: 'num' }, 'Objects'), h('th', null, 'Added'), h('th', null))),
+        h('tbody', null, mine.map((m) => h('tr', null,
+          h('td', null,
+            h('div', { class: 'mib-name' }, m.name),
+            m.missing.length ? h('div', { class: 'mib-warn' }, `Needs ${m.missing.join(', ')}`) : null,
+            m.unresolved ? h('div', { class: 'muted small' }, `${m.unresolved} object${m.unresolved === 1 ? '' : 's'} can’t be placed yet`) : null,
+            m.errors.length ? h('div', { class: 'mib-warn', title: m.errors.join('\n') }, `${m.errors.length} part${m.errors.length === 1 ? '' : 's'} couldn’t be read`) : null),
+          h('td', { class: 'muted small' }, m.filename),
+          h('td', { class: 'num' }, m.objects.toLocaleString()),
+          h('td', { class: 'muted small' }, fmtAgo(m.addedAt)),
+          h('td', { class: 'num' }, h('button', { class: 'btn small ghost', onclick: () => remove(m) }, 'Remove'))))))) : h('p', { class: 'muted' }, 'No MIBs added yet.'),
+      neededNote(missing),
+      h('div', { class: 'mib-actions' }, uploadButton((r) => {
+        missing = stillNeeded(r);
+        render(r.modules);
+      }, { cls: 'btn primary' })),
+      h('details', { class: 'mib-builtin' },
+        h('summary', null, `${bundled.length} standard MIBs are built in`),
+        h('p', null, bundled.map((m) => h('code', { class: 'csv-val' }, m.name)))));
+  };
+  api('mibs').then((r) => render(r.modules)).catch((err) => fill(body, h('p', { class: 'snmp-notes' }, err.message)));
+  return h('section', { class: 'card mib-card' },
+    h('h3', null, 'MIB library'),
+    h('p', { class: 'muted' }, 'MIB files tell the SNMP “All data” view what a device’s values are called, their units and what their numbers mean. The standard ones are built in; add your devices’ own (vendor) MIBs here, and they apply to every SNMP monitor. A vendor MIB usually imports others from the same vendor, so add those too when it says it needs them.'),
+    body);
+}
+
 // ---- "All data" browser -----------------------------------------------------
 
-let browse = null; // { id, entries, next, loading, error, filter }
+let browse = null; // { id, entries, objects, next, loading, error, filter, open, missing }
 const SHOW_MAX = 1500;
 
 function valueText(e) {
+  if (e.text != null) return e.text;
   if (e.value == null) return e.type;
   if (e.type === 'timeticks') return `${fmtUptime(Math.round(e.value / 100))} (${e.value})`;
   if (e.type === 'oid') {
@@ -294,11 +386,27 @@ function valueText(e) {
   return String(e.value);
 }
 
+// Where the values nobody names live: the deepest known node above each
+// and the arc below it, most values first.
+function unnamed(entries) {
+  const groups = new Map();
+  let total = 0;
+  for (const e of entries) {
+    if (e.name || oidName(e.oid)) continue;
+    total++;
+    const oid = e.near?.oid ?? e.oid.split('.').slice(0, 7).join('.');
+    const g = groups.get(oid) ?? { oid, under: e.near?.under, n: 0 };
+    g.n++;
+    groups.set(oid, g);
+  }
+  return { total, top: [...groups.values()].sort((a, b) => b.n - a.n).slice(0, 5) };
+}
+
 // A page of its own (#/monitor/:id/snmp): walk the device, a page at a time,
 // search it, and add values to the monitor's page or its card.
 export async function renderSnmpBrowser(main, m) {
   if (!m) return fill(main, h('div', { class: 'card' }, h('p', null, 'Loading…')));
-  if (browse?.id !== m.id) browse = { id: m.id, entries: [], next: null, loading: false, error: null, filter: '', started: false };
+  if (browse?.id !== m.id) browse = { id: m.id, entries: [], objects: {}, next: null, loading: false, error: null, filter: '', started: false, open: new Set(), missing: [] };
   const b = browse;
   if (!cache.get(m.id)?.value) {
     const value = await api(`monitors/${m.id}/data`).catch(() => null);
@@ -317,12 +425,19 @@ export async function renderSnmpBrowser(main, m) {
       const page = await api(`monitors/${m.id}/snmp/walk${b.next ? `?start=${b.next}` : ''}`);
       if (browse !== b) return;
       b.entries.push(...page.entries);
+      Object.assign(b.objects, page.objects);
       b.next = page.next;
     } catch (err) {
       b.error = err.message;
     }
     b.loading = false;
     redraw();
+  };
+  // New MIBs: names come from the server, so read the device again.
+  const reread = (r) => {
+    b.missing = stillNeeded(r);
+    Object.assign(b, { entries: [], objects: {}, next: null, started: false });
+    load();
   };
   if (!b.started) return load();
 
@@ -339,6 +454,11 @@ export async function renderSnmpBrowser(main, m) {
     const oids = pinned.has(e.oid) ? disp.oids : formatExtra([...parseExtra(disp.oids), { label: labelOf(e, name), oid: e.oid }]);
     return saveDisplay(m.id, { oids, card: [...disp.card, key] }, redraw);
   };
+  const toggleOpen = (oid) => {
+    if (b.open.has(oid)) b.open.delete(oid);
+    else b.open.add(oid);
+    redraw();
+  };
 
   const q = b.filter.trim().toLowerCase();
   const full = disp.card.length >= CARD_MAX;
@@ -346,9 +466,10 @@ export async function renderSnmpBrowser(main, m) {
   let group = null;
   let matches = 0;
   for (const e of b.entries) {
-    const name = oidName(e.oid);
+    const name = e.name ?? oidName(e.oid);
+    const obj = e.obj ? b.objects[e.obj] : null;
     const text = valueText(e);
-    if (q && !`${name ?? ''} ${e.oid} ${text}`.toLowerCase().includes(q)) continue;
+    if (q && !`${name ?? ''} ${obj?.module ?? ''} ${e.oid} ${text}`.toLowerCase().includes(q)) continue;
     if (++matches > SHOW_MAX) continue;
     const g = oidGroup(e.oid);
     if (g !== group) {
@@ -357,14 +478,45 @@ export async function renderSnmpBrowser(main, m) {
     }
     const isPinned = pinned.has(e.oid);
     const isCard = disp.card.includes(`value:${e.oid}`);
-    rows.push(h('tr', { class: isPinned ? 'snmp-pinned' : null },
-      h('td', null, h('div', { class: 'snmp-oid-name' }, name ?? h('span', { class: 'muted' }, '—')), h('div', { class: 'mono muted small' }, e.oid)),
-      h('td', { class: 'snmp-value' }, text),
-      h('td', { class: 'muted small' }, e.type),
+    const open = obj && b.open.has(e.oid);
+    rows.push(h('tr', { class: `${isPinned ? 'snmp-pinned' : ''}${open ? ' snmp-open' : ''}` },
+      h('td', null,
+        h('div', { class: 'snmp-oid-name' },
+          !name ? h('span', { class: 'muted' }, '—')
+          : obj ? h('button', { class: 'linkish snmp-obj-btn', 'aria-expanded': String(!!open), title: obj.desc ? `${obj.desc.slice(0, 300)}${obj.desc.length > 300 ? '…' : ''}` : 'Details', onclick: () => toggleOpen(e.oid) }, name)
+          : name),
+        h('div', { class: 'mono muted small' },
+          obj ? `${obj.module} · ` : null,
+          name ? e.oid : h('a', { class: 'snmp-lookup', href: OBSERVIUM(e.oid), target: '_blank', rel: 'noopener noreferrer', title: 'Look this OID up on mibs.observium.org' }, e.oid))),
+      h('td', { class: 'snmp-value' }, text, e.raw != null ? h('span', { class: 'muted snmp-raw' }, ` (${e.raw})`) : null),
+      h('td', { class: 'muted small', title: obj?.type ?? '' }, obj?.type?.replace(/ \(.*\)$/, '') ?? e.type),
       h('td', { class: 'snmp-row-ctls' }, h('span', { class: 'snmp-ctls' },
         h('button', { class: `snmp-ctl${isPinned ? ' on' : ''}`, 'aria-pressed': String(isPinned), title: isPinned ? 'Take it off the monitor’s page' : 'Show it on the monitor’s page, under Values', onclick: () => togglePage(e, name) }, isPinned ? '✓ Page' : '+ Page'),
         h('button', { class: `snmp-ctl card${isCard ? ' on' : ''}`, 'aria-pressed': String(isCard), disabled: !isCard && full, title: isCard ? 'Take it off the card in the Falls' : full ? `The card shows at most ${CARD_MAX} values` : 'Show it on the card in the Falls', onclick: () => toggleCard(e, name) }, isCard ? '✓ Card' : '+ Card')))));
+    if (open) {
+      const item = (label, value) => (value ? h('div', null, h('dt', null, label), h('dd', null, value)) : null);
+      rows.push(h('tr', { class: 'snmp-detail-row' }, h('td', { colspan: 4 },
+        h('dl', { class: 'snmp-obj' },
+          item('Object', obj.name), item('MIB', obj.module), item('Type', obj.type), item('Units', obj.units), item('Access', obj.access), item('Status', obj.status)),
+        obj.desc ? h('p', { class: 'snmp-desc' }, obj.desc) : null)));
+    }
   }
+
+  const unknown = b.loading && !b.entries.length ? { total: 0 } : unnamed(b.entries);
+  const unknownBox = unknown.total ? h('div', { class: 'snmp-unknown' },
+    h('p', null,
+      h('strong', null, `${unknown.total.toLocaleString()} of ${b.entries.length.toLocaleString()} values have no name.`),
+      ' They come from MIBs that aren’t here, usually the device maker’s own. Look up where they are to find the MIB, download it (from the maker, or the lookup page), and add it.'),
+    h('ul', null, unknown.top.map((t) => {
+      const vendor = oidGroup(t.oid);
+      return h('li', null,
+        h('span', { class: 'mono' }, t.oid),
+        vendor !== 'Other' && vendor !== 'Enterprise' ? h('span', null, ` ${vendor}`) : null,
+        t.under && t.under !== 'enterprises' ? h('span', { class: 'muted' }, ` under ${t.under}`) : null,
+        h('span', { class: 'muted' }, ` · ${t.n.toLocaleString()} value${t.n === 1 ? '' : 's'} · `),
+        ext(OIDREF(t.oid), 'oidref.com', 'Which MIB defines this, with downloads'), ' ',
+        ext(OBSERVIUM(t.oid), 'Observium', 'Search mibs.observium.org for this OID'));
+    }))) : null;
 
   const search = h('input', {
     class: 'snmp-search',
@@ -386,8 +538,13 @@ export async function renderSnmpBrowser(main, m) {
       h('div', null,
         h('div', { class: 'crumbs' }, h('a', { href: `#/monitor/${m.id}` }, `← ${m.name}`)),
         h('h1', null, 'All SNMP data'),
-        h('p', { class: 'muted' }, `Everything ${m.name} reports, read live. + Page adds a value to the monitor’s page, + Card to its card in the Falls (at most ${CARD_MAX}).`)),
-      h('div', { class: 'actions' }, h('a', { class: 'btn', href: `#/monitor/${m.id}` }, 'Back'))),
+        h('p', { class: 'muted' }, `Everything ${m.name} reports, read live. Click a name for what it means. + Page adds a value to the monitor’s page, + Card to its card in the Falls (at most ${CARD_MAX}).`)),
+      h('div', { class: 'actions' },
+        uploadButton(reread),
+        h('a', { class: 'btn ghost', href: '#/settings', title: 'MIB library (Settings)' }, 'MIBs'),
+        h('a', { class: 'btn', href: `#/monitor/${m.id}` }, 'Back'))),
+    neededNote(b.missing),
+    unknownBox,
     h('section', { class: 'card' },
       h('div', { class: 'card-head' },
         search,

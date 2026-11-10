@@ -4,6 +4,9 @@
 // `data`, which the engine keeps as the monitor's latest snapshot. Rates are
 // worked out from the previous snapshot, which the engine passes back in.
 import { SnmpClient, MISSING, isOid } from '../snmp.js';
+import { formatValue, mibLibrary, octetText } from '../mib.js';
+
+export { octetText };
 
 const SYSTEM = {
   descr: '1.3.6.1.2.1.1.1.0',
@@ -56,15 +59,6 @@ const IF_TYPES = { 1: 'Other', 6: 'Ethernet', 24: 'Loopback', 53: 'Virtual', 71:
 // OIDs, items hidden from the monitor's page, and what the Falls card shows.
 export const DISPLAY_KEYS = ['oids', 'hide', 'card'];
 export const CARD_MAX = 2;
-
-// Octet strings: text when they read as text, otherwise hex (MAC addresses).
-export function octetText(buf, sep = ' ') {
-  if (!Buffer.isBuffer(buf)) return buf == null ? '' : String(buf);
-  const s = buf.toString('utf8');
-  // eslint-disable-next-line no-control-regex
-  if (!/[\x00-\x08\x0e-\x1f\x7f�]/.test(s.replace(/\0+$/, ''))) return s.replace(/\0+$/, '');
-  return [...buf].map((b) => b.toString(16).padStart(2, '0')).join(sep);
-}
 
 // "Label = OID" (or just an OID) per line or separated by ";".
 export function parseExtraOids(text) {
@@ -140,7 +134,12 @@ export async function checkSnmp(monitor, { previous } = {}) {
     if (extra.length && Date.now() < deadline) {
       try {
         const vbs = await client.get(extra.map((e) => e.oid), opts());
-        custom = extra.map((e, i) => ({ ...e, type: vbs[i].type, value: plain(vbs[i]) }));
+        const lib = mibLibrary();
+        custom = extra.map((e, i) => {
+          const hit = lib.label(e.oid);
+          const { text } = formatValue(hit?.entry, vbs[i], lib);
+          return { ...e, type: vbs[i].type, value: plain(vbs[i]), text, name: hit?.name ?? null };
+        });
       } catch (err) {
         notes.push(`Extra values: ${err.message}`);
         custom = extra.map((e) => ({ ...e, type: 'error', value: null }));
@@ -208,7 +207,7 @@ export function cardItem(data, key, config) {
     }
     case 'value': {
       const v = data.custom?.find((x) => x.oid === arg);
-      return v && v.value != null ? `${v.label} ${v.value}` : null;
+      return v && v.value != null ? `${v.label} ${v.text ?? v.value}` : null;
     }
     default: return null;
   }
@@ -238,17 +237,48 @@ export async function snmpBrowse(monitor, { start, limit = 2000 } = {}) {
   try {
     const deadline = Date.now() + 20000;
     const rows = await client.walk('1.3.6.1', { start, max: limit, deadline });
-    const entries = rows.map((vb) => ({
-      oid: vb.oid,
-      type: vb.type,
-      value: vb.type === 'octets' || vb.type === 'opaque' ? octetText(vb.value) : vb.value,
-    }));
+    const lib = mibLibrary();
+    const objects = {};
+    const entries = rows.map((vb) => {
+      const hit = lib.label(vb.oid);
+      const { text, raw } = formatValue(hit?.entry, vb, lib);
+      const e = {
+        oid: vb.oid,
+        type: vb.type,
+        value: vb.type === 'octets' || vb.type === 'opaque' ? octetText(vb.value) : vb.value,
+        text,
+      };
+      if (raw != null && raw !== text) e.raw = raw;
+      if (hit) {
+        e.name = hit.name;
+        e.obj = hit.oid;
+        objects[hit.oid] ??= describeObject(hit.entry);
+      } else {
+        const near = lib.near(vb.oid);
+        if (near) e.near = near;
+      }
+      return e;
+    });
     // a full page, or cut short by the deadline: there is more
     const more = entries.length && (entries.length >= limit || Date.now() > deadline);
-    return { entries, next: more ? entries[entries.length - 1].oid : null };
+    return { entries, objects, next: more ? entries[entries.length - 1].oid : null };
   } finally {
     client.close();
   }
+}
+
+// What the browser shows about an object (on hover).
+function describeObject(entry) {
+  const s = entry.syntax ?? {};
+  return {
+    name: entry.name,
+    module: entry.module,
+    type: (s.tc ? `${s.tc} (${s.base})` : s.base)?.replace('OBJECT IDENTIFIER', 'OID'),
+    units: entry.units,
+    access: entry.access,
+    status: ['deprecated', 'obsolete'].includes(entry.status) ? entry.status : undefined,
+    desc: entry.desc,
+  };
 }
 
 function interfacesFrom(cols) {

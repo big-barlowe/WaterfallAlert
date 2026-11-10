@@ -121,6 +121,15 @@ const MIGRATIONS = [
     data       TEXT NOT NULL
   );
   `,
+  // v6: MIB modules uploaded to the MIB library, one row per module.
+  `
+  CREATE TABLE mibs (
+    name     TEXT PRIMARY KEY,
+    filename TEXT NOT NULL,
+    text     TEXT NOT NULL,
+    added_at INTEGER NOT NULL
+  );
+  `,
 ];
 
 const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
@@ -295,6 +304,21 @@ export class Store {
   }
 
   // ---- hierarchy edges ----------------------------------------------------
+
+  // ---- MIB library ------------------------------------------------------
+
+  listMibs() {
+    return this.q('SELECT name, filename, text, added_at AS addedAt FROM mibs ORDER BY name').all();
+  }
+
+  putMib({ name, filename, text }, now = Date.now()) {
+    this.q('INSERT INTO mibs (name, filename, text, added_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET filename = excluded.filename, text = excluded.text, added_at = excluded.added_at')
+      .run(name, filename, text, now);
+  }
+
+  deleteMib(name) {
+    return this.q('DELETE FROM mibs WHERE name = ?').run(name).changes > 0;
+  }
 
   listEdges() {
     return this.q('SELECT parent_id AS parentId, child_id AS childId FROM monitor_edges').all()

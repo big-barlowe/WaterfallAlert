@@ -11,6 +11,7 @@ COPY app/package.json app/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY app/src ./src
 COPY app/public ./public
+COPY app/mibs ./mibs
 
 ENV NODE_ENV=production \
     PORT=8099 \

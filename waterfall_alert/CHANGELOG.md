@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+- **SNMP values named from MIBs.** About 70 standard MIBs are built in, so **All data** names everything standard and shows values the way the MIB defines them: *up* instead of `1`, *41.5 degrees C*, *8022576 kB*, MAC addresses, dates, and the names of OID values (*hrStorageRam*). Click a name for its description, MIB, type, units and access.
+- **MIB library.** Add your devices' own MIBs under **Settings → MIB library**, or with **Add MIB files…** in **All data**. They apply to every SNMP monitor, and the library says when a MIB needs another one it imports. Values on the Falls card and the monitor's page pick up units and names too.
+- **Finding a MIB.** All data lists where the values it can't name are, with links to look them up on oidref.com and Observium's MIB browser.
+
 ## 0.9.0
 
 - **SNMP monitors (v1/v2c).** Up when the device answers. Every check also collects what it advertises: system name, description, location, contact and uptime; every interface with status, speed, traffic in and out and errors; CPU, memory and disks where offered; and extra values you list as `Label = OID`. It all shows on the monitor's page, with a summary in its details panel in the Falls. SNMPv3 and alerting on these values are still to come.

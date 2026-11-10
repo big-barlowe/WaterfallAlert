@@ -6,6 +6,7 @@ import { HttpError, badRequest, int, idList, normalizeMonitor, normalizeTag } fr
 import { exportCsv, importCsv, CSV_COLUMNS, CSV_EXAMPLE, csvTemplate } from './transfer.js';
 import { DISPLAY_KEYS, snmpBrowse } from './checkers/snmp.js';
 import { isOid } from './snmp.js';
+import { buildLibrary, mibLibrary, parseMib, setMibLibrary, splitModules } from './mib.js';
 
 // A monitor's config without the keys that only change how its data is
 // shown, to tell whether what it checks has changed.
@@ -41,6 +42,15 @@ export function createApi({ store, engine, icons }) {
     const keys = [];
     const re = new RegExp('^' + pattern.replace(/:(\w+)/g, (_, k) => (keys.push(k), '([^/]+)')) + '$');
     routes.push({ method, re, keys, handler });
+  };
+
+  // The MIB library: the bundled modules plus the uploaded ones. SNMP
+  // monitors are checked again after a change, so card values pick up new
+  // names and units.
+  setMibLibrary(buildLibrary(store.listMibs()));
+  const mibsChanged = () => {
+    setMibLibrary(buildLibrary(store.listMibs()));
+    engine.reload(store.listMonitors().filter((m) => m.type === 'snmp').map((m) => m.id));
   };
 
   const monitorOr404 = (id) => {
@@ -293,6 +303,49 @@ export function createApi({ store, engine, icons }) {
     } catch (err) {
       throw new HttpError(502, err.message);
     }
+  });
+
+  // ---- MIB library
+
+  route('GET', '/api/mibs', () => ({ modules: mibLibrary().list() }));
+
+  // { files: [{ filename, text }] }. Each module in a file is stored on its
+  // own, replacing an uploaded or bundled one of the same name.
+  route('POST', '/api/mibs', ({ body }) => {
+    if (!Array.isArray(body?.files)) throw new HttpError(400, 'files must be a list');
+    const files = body.files;
+    const before = mibLibrary();
+    const added = [];
+    const errors = [];
+    store.tx(() => {
+      for (const f of files) {
+        const filename = String(f?.filename ?? '').slice(0, 200) || 'MIB';
+        if (typeof f?.text !== 'string' || !f.text.trim()) {
+          errors.push({ filename, error: 'Empty file' });
+          continue;
+        }
+        let mods;
+        try {
+          mods = parseMib(f.text);
+        } catch (err) {
+          errors.push({ filename, error: err.message });
+          continue;
+        }
+        const texts = splitModules(f.text);
+        for (const mod of mods) {
+          store.putMib({ name: mod.name, filename, text: texts.get(mod.name) ?? f.text });
+          added.push({ name: mod.name, filename, replaced: before.modules.get(mod.name)?.source ?? null });
+        }
+      }
+    });
+    if (added.length) mibsChanged();
+    return { added, errors, modules: mibLibrary().list() };
+  });
+
+  route('DELETE', '/api/mibs/:name', ({ params }) => {
+    if (!store.deleteMib(params.name)) throw new HttpError(404, 'No uploaded MIB by that name');
+    mibsChanged();
+    return { modules: mibLibrary().list() };
   });
 
   route('GET', '/api/monitors/:id/uptime', ({ params }) => {
