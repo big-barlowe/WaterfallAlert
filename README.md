@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/brand/header.svg" alt="BlueHole" width="520"></p>
+<p align="center"><img src="docs/brand/header-animated.svg" alt="BlueHole" width="520"></p>
 
 # BlueHole
 

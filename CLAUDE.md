@@ -57,7 +57,7 @@ waterfall_alert/             the add-on (Supervisor build context)
     test/problems.test.js    value problems: readings, open/resolve alerts by severity, checks in a row, restarts, routes, SNMP probe
     test/transfer.test.js    CSV round trip into a fresh store, import modes, rollback on errors
 docs/csv.md                  user guide for the CSV format (linked from the Settings page)
-docs/brand/                  logo.svg, node.svg, header.svg: the originals. icon.png/logo.png (add-on) and public/favicon.* are rendered from logo.svg; the header mark (index.html) and the Falls source (`blueHole()` in flow.js) are built from header.svg/node.svg
+docs/brand/                  logo.svg, node.svg, header.svg: the originals. header-animated.svg: the README banner, the header mark as a standalone transparent file with its animation inside (kept in step with index.html by hand). icon.png/logo.png (add-on) and public/favicon.* are rendered from logo.svg; the header mark (index.html) and the Falls source (`blueHole()` in flow.js) are built from header.svg/node.svg
 docs/docker.md               running without Home Assistant (Compose, backups, reverse proxy, networking)
 ```
 
