@@ -460,7 +460,7 @@ export class Engine {
     for (const p of watching) {
       // the probe itself failed: no news either way
       if (!result.probe && p.config.readings.some((r) => r.source === 'oid')) continue;
-      const r = evaluate(p, result);
+      const r = evaluate(p, result, m);
       const key = `${p.id}:${m.id}`;
       let x = this.pstate.get(key);
       if (!x) {

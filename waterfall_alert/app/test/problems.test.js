@@ -255,3 +255,23 @@ test("a monitor's page lists the problems reading it, and which reading it answe
   assert.equal(printer.state, 'notSnmp');
   assert.deepEqual(await t.call('GET', `/api/monitors/${t.ids.Core}/problems`), []);
 });
+
+test('a reading can be kept to one model (sysObjectID) or to certain monitors', async () => {
+  const odd = '1.3.6.1.4.1.99999.5.1.0';
+  const p = { config: { readings: [
+    { source: 'oid', oid: odd, op: 'in', values: [2], where: { sysObjectId: '1.3.6.1.4.1.99999.1' } },
+    { source: 'oid', oid: odd, op: 'in', values: [1], where: { monitorIds: [7] } },
+  ] } };
+  const res = (sys) => ({ probe: { [odd]: { value: 2, text: '2' } }, data: { system: { objectId: sys } } });
+  assert.equal(evaluate(p, res('1.3.6.1.4.1.99999.1'), { id: 3 }).state, 'open');
+  assert.deepEqual(evaluate(p, res('1.3.6.1.4.1.318.1'), { id: 7 }), { state: 'ok', value: '2', reading: 1 });
+  assert.equal(evaluate(p, res('1.3.6.1.4.1.318.1'), { id: 3 }).state, 'unknown');
+
+  const t = setup();
+  const body = (where) => ({ name: 'Odd', severity: 'info', config: { readings: [{ source: 'oid', oid: odd, op: 'in', values: [1], where }] } });
+  await assert.rejects(t.call('POST', '/api/problems', body({ sysObjectId: 'APC' })), /Reading 1: "APC" is not a sysObjectID/);
+  const saved = await t.call('POST', '/api/problems', body({ sysObjectId: '.1.3.6.1.4.1.99999.1', monitorIds: [3, 3, 'x'] }));
+  assert.deepEqual(saved.config.readings[0].where, { sysObjectId: '1.3.6.1.4.1.99999.1', monitorIds: [3] });
+  const plain = await t.call('POST', '/api/problems', body({}));
+  assert.equal(plain.config.readings[0].where, undefined);
+});

@@ -5,6 +5,7 @@
 // with PUT api/monitors/:id/snmp-display.
 import { api, h, fill, fmtAgo, toast, confirmDialog } from './util.js';
 import { oidName, oidGroup } from './snmp-names.js';
+import { pickValueDialog } from './problems.js';
 
 export const CARD_MAX = 2;
 
@@ -404,7 +405,8 @@ function unnamed(entries) {
 
 // A page of its own (#/monitor/:id/snmp): walk the device, a page at a time,
 // search it, and add values to the monitor's page or its card.
-export async function renderSnmpBrowser(main, m) {
+// `pick`: opened from "Pick a value" for that problem definition (id).
+export async function renderSnmpBrowser(main, m, { pick = null, navigate = (hash) => { location.hash = hash; } } = {}) {
   if (!m) return fill(main, h('div', { class: 'card' }, h('p', null, 'Loading…')));
   if (browse?.id !== m.id) browse = { id: m.id, entries: [], objects: {}, next: null, loading: false, error: null, filter: '', started: false, open: new Set(), missing: [] };
   const b = browse;
@@ -414,7 +416,15 @@ export async function renderSnmpBrowser(main, m) {
   }
   const disp = cache.get(m.id)?.value?.display ?? { oids: '', hide: [], card: [] };
   // only while the browser is still the page on screen
-  const redraw = () => location.hash.startsWith(`#/monitor/${m.id}/snmp`) && renderSnmpBrowser(main, m);
+  const redraw = () => location.hash.startsWith(`#/monitor/${m.id}/snmp`) && renderSnmpBrowser(main, m, { pick, navigate });
+  if (!pick) b.pickFor = null;
+  else if (b.pickFor?.id !== pick) {
+    b.pickFor = { id: pick, def: null };
+    api('problems').then((list) => {
+      b.pickFor.def = list.find((p) => p.id === pick) ?? null;
+      redraw();
+    }).catch(() => {});
+  }
 
   const load = async () => {
     b.started = true;
@@ -460,6 +470,13 @@ export async function renderSnmpBrowser(main, m) {
     redraw();
   };
 
+  const sysObjectId = b.entries.find((e) => e.oid === '1.3.6.1.2.1.1.2.0')?.value ?? cache.get(m.id)?.value?.data?.system?.objectId ?? null;
+  const usePick = (e, name, obj) => {
+    const g = oidGroup(e.oid);
+    const vendor = e.oid.startsWith('1.3.6.1.4.1.') && g !== 'Enterprise' ? g : obj?.module ?? '';
+    pickValueDialog({ monitor: m, entry: { oid: e.oid, name, value: e.value, text: valueText(e) }, sysObjectId, pickId: pick, vendor, navigate });
+  };
+
   const q = b.filter.trim().toLowerCase();
   const full = disp.card.length >= CARD_MAX;
   const rows = [];
@@ -492,7 +509,8 @@ export async function renderSnmpBrowser(main, m) {
       h('td', { class: 'muted small', title: obj?.type ?? '' }, obj?.type?.replace(/ \(.*\)$/, '') ?? e.type),
       h('td', { class: 'snmp-row-ctls' }, h('span', { class: 'snmp-ctls' },
         h('button', { class: `snmp-ctl${isPinned ? ' on' : ''}`, 'aria-pressed': String(isPinned), title: isPinned ? 'Take it off the monitor’s page' : 'Show it on the monitor’s page, under Values', onclick: () => togglePage(e, name) }, isPinned ? '✓ Page' : '+ Page'),
-        h('button', { class: `snmp-ctl card${isCard ? ' on' : ''}`, 'aria-pressed': String(isCard), disabled: !isCard && full, title: isCard ? 'Take it off the card in the Falls' : full ? `The card shows at most ${CARD_MAX} values` : 'Show it on the card in the Falls', onclick: () => toggleCard(e, name) }, isCard ? '✓ Card' : '+ Card')))));
+        h('button', { class: `snmp-ctl card${isCard ? ' on' : ''}`, 'aria-pressed': String(isCard), disabled: !isCard && full, title: isCard ? 'Take it off the card in the Falls' : full ? `The card shows at most ${CARD_MAX} values` : 'Show it on the card in the Falls', onclick: () => toggleCard(e, name) }, isCard ? '✓ Card' : '+ Card'),
+        e.value != null ? h('button', { class: `snmp-ctl problem${pick ? ' picking' : ''}`, title: 'Use it in a problem definition: alert when it has certain values', onclick: () => usePick(e, name, obj) }, '+ Problem') : null))));
     if (open) {
       const item = (label, value) => (value ? h('div', null, h('dt', null, label), h('dd', null, value)) : null);
       rows.push(h('tr', { class: 'snmp-detail-row' }, h('td', { colspan: 4 },
@@ -538,11 +556,17 @@ export async function renderSnmpBrowser(main, m) {
       h('div', null,
         h('div', { class: 'crumbs' }, h('a', { href: `#/monitor/${m.id}` }, `← ${m.name}`)),
         h('h1', null, 'All SNMP data'),
-        h('p', { class: 'muted' }, `Everything ${m.name} reports, read live. Click a name for what it means. + Page adds a value to the monitor’s page, + Card to its card in the Falls (at most ${CARD_MAX}).`)),
+        h('p', { class: 'muted' }, `Everything ${m.name} reports, read live. Click a name for what it means. + Page adds a value to the monitor’s page, + Card to its card in the Falls (at most ${CARD_MAX}), + Problem to a problem definition, to alert on it.`)),
       h('div', { class: 'actions' },
         uploadButton(reread),
         h('a', { class: 'btn ghost', href: '#/settings', title: 'MIB library (Settings)' }, 'MIBs'),
         h('a', { class: 'btn', href: `#/monitor/${m.id}` }, 'Back'))),
+    b.pickFor ? h('div', { class: 'banner pick-banner' },
+      h('div', null,
+        h('strong', null, `Picking a value for ${b.pickFor.def?.name ?? 'a problem definition'}. `),
+        b.pickFor.def ? `${m.name} answers none of its readings (${b.pickFor.def.config.readings.map((r) => r.label || r.oid || r.source).join(', ')}). ` : null,
+        'Find the value that shows it (searching helps, such as “battery”, “output” or “status”), then press + Problem on its row.'),
+      h('a', { class: 'btn small ghost', href: `#/monitor/${m.id}/snmp` }, 'Stop picking')) : null,
     neededNote(b.missing),
     unknownBox,
     h('section', { class: 'card' },

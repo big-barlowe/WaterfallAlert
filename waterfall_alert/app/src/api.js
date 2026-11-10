@@ -619,7 +619,7 @@ export function createApi({ store, engine, icons }) {
     });
   };
 
-  const problemOr404 = (id) => store.getProblem(Number(id)) ?? (() => { throw new HttpError(404, 'Problem not found'); })();
+  const problemOr404 = (id) => store.getProblem(Number(id)) ?? (() => { throw new HttpError(404, 'Problem definition not found'); })();
 
   // The SNMP monitors a problem watches, to check straight away after a change.
   const watchedBy = (p) => {
@@ -682,7 +682,7 @@ export function createApi({ store, engine, icons }) {
   // it, so they go too (the page warns first); others just drop it.
   route('DELETE', '/api/problems/:id', ({ params }) => {
     const existing = problemOr404(params.id);
-    if (existing.kind === 'down') throw new HttpError(400, 'The built-in problem can not be deleted');
+    if (existing.kind === 'down') throw new HttpError(400, "The built-in problem definition can't be deleted");
     let rulesDeleted = 0;
     store.tx(() => {
       for (const r of store.listRules()) {

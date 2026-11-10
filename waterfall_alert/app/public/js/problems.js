@@ -140,6 +140,85 @@ function readingText(r) {
   return `${r.label ? `${r.label}: ` : ''}${what} ${readingWhen(r)}`;
 }
 
+// The "Problem when it [op] [values]" line of a reading, and the MIB name
+// under it. look() (re)fetches what the MIB library knows about its OID.
+export function readingTest(r, repaint) {
+  const isList = r.op === 'in' || r.op === 'not-in';
+  const enumsBox = h('div', { class: 'reading-values' });
+  const paintValues = (enums) => {
+    if (!isList) {
+      return fill(enumsBox, h('input', {
+        type: 'number', class: 'reading-num', value: r.value ?? '', 'aria-label': 'Value', step: 'any',
+        oninput: (e) => { r.value = e.target.value === '' ? '' : Number(e.target.value); },
+      }), r.source === 'oid' ? null : h('span', { class: 'muted small' }, '%'));
+    }
+    const names = { ...(enums ?? {}), ...(r.names ?? {}) };
+    const all = Object.keys(names).sort((a, b) => Number(a) - Number(b));
+    const chip = (k) => {
+      const on = r.values.some((v) => String(v) === k);
+      return h('button', {
+        type: 'button',
+        class: `rule-opt${on ? ' on' : ''}${String(r.current) === k ? ' now' : ''}`,
+        'aria-pressed': String(on),
+        title: String(r.current) === k ? 'Its value now' : null,
+        onclick: () => {
+          r.values = on ? r.values.filter((v) => String(v) !== k) : [...r.values, Number.isNaN(Number(k)) ? k : Number(k)];
+          if (!r.names?.[k] && enums?.[k]) r.names = { ...(r.names ?? {}), [k]: enums[k] };
+          paintValues(enums);
+        },
+      }, h('span', { class: 'rule-tick', 'aria-hidden': 'true' }, on ? '✓' : ''), names[k], h('span', { class: 'muted small' }, ` ${k}`));
+    };
+    if (all.length) {
+      // A long list shows only the picked values until asked.
+      const picked = (k) => r.values.some((v) => String(v) === k);
+      const keys = all.length > 8 && !enumsBox.showAll && all.some(picked) ? all.filter(picked) : all;
+      const more = keys.length < all.length
+        ? h('button', { type: 'button', class: 'linkish small', onclick: () => { enumsBox.showAll = true; paintValues(enums); } }, `Show all ${all.length} values`)
+        : null;
+      return fill(enumsBox, keys.map(chip), more);
+    }
+    fill(enumsBox, h('input', {
+      class: 'reading-list',
+      value: r.values.join(', '),
+      placeholder: 'e.g. 3, 5',
+      'aria-label': 'Values, separated by commas',
+      oninput: (e) => { r.values = e.target.value.split(',').map((v) => v.trim()).filter(Boolean).map((v) => (/^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v)); },
+    }));
+  };
+  const mib = h('div', { class: 'reading-mib small muted' });
+  const look = () => {
+    if (r.source !== 'oid' || !/^\.?\d+(\.\d+)+$/.test(r.oid ?? '')) {
+      fill(mib);
+      return paintValues(null);
+    }
+    lookupOid(r.oid.replace(/^\./, '')).then((info) => {
+      fill(mib, info ? `${info.module ? `${info.module}::` : ''}${info.name}${info.units ? ` (${info.units})` : ''}` : r.names ? '' : 'Not in the MIB library: type the values');
+      paintValues(info?.enums ?? null);
+    });
+  };
+  const test = h('div', { class: 'reading-test' },
+    h('span', { class: 'muted small' }, 'Problem when it'),
+    h('select', {
+      'aria-label': 'Test',
+      onchange: (e) => {
+        const op = e.target.value;
+        const toList = op === 'in' || op === 'not-in';
+        Object.assign(r, toList === isList ? { op } : toList ? { op, values: [], value: undefined } : { op, value: '', values: undefined });
+        repaint();
+      },
+    }, Object.entries(OP_LABEL).map(([k, label]) => h('option', { value: k, selected: r.op === k }, label))),
+    enumsBox);
+  return { test, mib, look };
+}
+
+// "Only devices with sysObjectID …" / "Only UPS Library"
+function whereText(w, nameOf) {
+  const parts = [];
+  if (w.sysObjectId) parts.push(`devices with sysObjectID ${w.sysObjectId}`);
+  if (w.monitorIds?.length) parts.push(w.monitorIds.map(nameOf).join(', '));
+  return `Only for ${parts.join(', and only ')}`;
+}
+
 // ---- picking monitors by tag ---------------------------------------------------
 
 // Tag pills with any/all, or an expression (Advanced). `value` is
@@ -207,7 +286,7 @@ export const PROBLEM_KINDS = {
 
 // box: where the cards go; addBtn: the section's "+ Add problem" button.
 // onChanged(deleted?) after a save or delete (rules may have changed).
-export function renderProblemsSection(box, { state, problems, onChanged }) {
+export function renderProblemsSection(box, { state, problems, onChanged, draft = null }) {
   let editing = null; // { id: problem id | 'new', draft }
   const tags = () => state.tags;
   const name = (id) => state.byId.get(id)?.name ?? `#${id}`;
@@ -237,7 +316,7 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
     return h('div', { class: 'problem-cov' },
       h('p', { class: 'small' },
         `Watching ${total} monitor${total === 1 ? '' : 's'}: `,
-        h('strong', { class: open.length ? `sev-text-${p.severity}` : '' }, `${open.length} open`),
+        h('strong', { class: open.length ? `sev-text-${p.severity}` : '' }, `${open.length} problem${open.length === 1 ? '' : 's'} open`),
         ` · ${by('ok').length} OK`,
         unknown.length ? [' · ', h('span', { class: 'problem-unknown' }, `${unknown.length} can't be read`)] : null,
         cov.waiting.length ? ` · ${cov.waiting.length} not checked yet` : null),
@@ -245,8 +324,8 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
       unknown.length || cov.notSnmp.length
         ? h('details', { class: 'problem-gaps' },
           h('summary', null, `${unknown.length + cov.notSnmp.length} tagged monitor${unknown.length + cov.notSnmp.length === 1 ? '' : 's'} can't be checked`),
-          unknown.length ? h('p', { class: 'small muted' }, 'These answer none of the readings. Look the value up in the device\'s All data and add it as a reading:') : null,
-          unknown.length ? h('div', { class: 'problem-mons' }, unknown.map((x) => h('span', null, link(x.monitorId), ' ', h('a', { class: 'small', href: `#/monitor/${x.monitorId}/snmp` }, 'All data')))) : null,
+          unknown.length ? h('p', { class: 'small muted' }, 'These answer none of the readings. Pick the value that tells from the device\'s data, and it becomes another reading:') : null,
+          unknown.length ? h('div', { class: 'problem-mons' }, unknown.map((x) => h('span', null, link(x.monitorId), ' ', h('a', { class: 'small pick-link', href: `#/monitor/${x.monitorId}/snmp?pick=${p.id}` }, 'Pick a value')))) : null,
           cov.notSnmp.length ? h('p', { class: 'small muted' }, 'Not SNMP monitors, so there is no value to read:') : null,
           cov.notSnmp.length ? h('div', { class: 'problem-mons' }, cov.notSnmp.map((id) => link(id))) : null)
         : null);
@@ -268,7 +347,7 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
       h('div', { class: 'problem-main' },
         h('h3', null, p.name, ' ', sevBadge(p.severity), ' ', h('span', { class: 'problem-kind' }, kind.label)),
         h('div', { class: 'problem-scope small' }, h('span', { class: 'muted' }, 'For '), scopeView(p)),
-        h('ul', { class: 'problem-readings' }, c.readings.map((r) => h('li', null, readingText(r)))),
+        h('ul', { class: 'problem-readings' }, c.readings.map((r) => h('li', null, readingText(r), r.where ? h('span', { class: 'reading-where-note' }, ` · ${whereText(r.where, name)}`) : null))),
         h('p', { class: 'small muted' }, [
           c.checks > 1 ? `Opens after ${c.checks} checks in a row.` : 'Opens on the first check that shows it.',
           c.downstream ? ' Its alert lists everything downstream.' : '',
@@ -308,10 +387,10 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
     api('rules').then((rules) => {
       const only = rules.filter((r) => r.problemIds.length === 1 && r.problemIds[0] === p.id).length;
       confirmDialog(`Delete ${p.name}?`,
-        `Open ${p.name} problems are dropped without a resolved alert.${only ? ` ${only} rule${only === 1 ? '' : 's'} that only alert${only === 1 ? 's' : ''} about it ${only === 1 ? 'is' : 'are'} deleted too.` : ''}`,
+        `Its open problems are dropped without a resolved alert.${only ? ` ${only} rule${only === 1 ? '' : 's'} that only alert${only === 1 ? 's' : ''} about it ${only === 1 ? 'is' : 'are'} deleted too.` : ''}`,
         'Delete', async () => {
           await api(`problems/${p.id}`, { method: 'DELETE' });
-          toast('Problem deleted', 'success');
+          toast('Problem definition deleted', 'success');
           onChanged();
         });
     });
@@ -322,7 +401,7 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
     try {
       const body = { name: editing.draft.name, severity: editing.draft.severity, config: editing.draft.config };
       await api(isNew ? 'problems' : `problems/${editing.id}`, { method: isNew ? 'POST' : 'PUT', body });
-      toast(isNew ? 'Problem added' : 'Saved', 'success');
+      toast(isNew ? 'Problem definition added' : 'Saved', 'success');
       editing = null;
       onChanged();
     } catch (err) {
@@ -362,58 +441,7 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
       Object.assign(r, patch);
       repaint();
     };
-    const isList = r.op === 'in' || r.op === 'not-in';
-    const enumsBox = h('div', { class: 'reading-values' });
-    const paintValues = (enums) => {
-      if (!isList) {
-        return fill(enumsBox, h('input', {
-          type: 'number', class: 'reading-num', value: r.value ?? '', 'aria-label': 'Value',
-          oninput: (e) => { r.value = e.target.value === '' ? '' : Number(e.target.value); },
-        }), r.source === 'oid' ? null : h('span', { class: 'muted small' }, '%'));
-      }
-      const names = { ...(enums ?? {}), ...(r.names ?? {}) };
-      const all = Object.keys(names).sort((a, b) => Number(a) - Number(b));
-      if (all.length) {
-        // A long list shows only the picked values until asked.
-        const picked = (k) => r.values.some((v) => String(v) === k);
-        const keys = all.length > 8 && !enumsBox.showAll && all.some(picked) ? all.filter(picked) : all;
-        const more = keys.length < all.length
-          ? h('button', { type: 'button', class: 'linkish small', onclick: () => { enumsBox.showAll = true; paintValues(enums); } }, `Show all ${all.length} values`)
-          : null;
-        return fill(enumsBox, more ? [keys.map(chip), more] : keys.map(chip));
-      }
-      function chip(k) {
-        const on = r.values.some((v) => String(v) === k);
-        return h('button', {
-          type: 'button',
-          class: `rule-opt${on ? ' on' : ''}`,
-          'aria-pressed': String(on),
-          onclick: () => {
-            r.values = on ? r.values.filter((v) => String(v) !== k) : [...r.values, Number.isNaN(Number(k)) ? k : Number(k)];
-            if (!r.names?.[k] && enums?.[k]) r.names = { ...(r.names ?? {}), [k]: enums[k] };
-            paintValues(enums);
-          },
-        }, h('span', { class: 'rule-tick', 'aria-hidden': 'true' }, on ? '✓' : ''), names[k], h('span', { class: 'muted small' }, ` ${k}`));
-      }
-      fill(enumsBox, h('input', {
-        class: 'reading-list',
-        value: r.values.join(', '),
-        placeholder: 'e.g. 3, 5',
-        'aria-label': 'Values, separated by commas',
-        oninput: (e) => { r.values = e.target.value.split(',').map((v) => v.trim()).filter(Boolean).map((v) => (/^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v)); },
-      }));
-    };
-    const mibLine = h('div', { class: 'reading-mib small muted' });
-    const look = () => {
-      if (r.source !== 'oid' || !/^\.?\d+(\.\d+)+$/.test(r.oid ?? '')) {
-        fill(mibLine);
-        return paintValues(null);
-      }
-      lookupOid(r.oid.replace(/^\./, '')).then((info) => {
-        fill(mibLine, info ? `${info.module ? `${info.module}::` : ''}${info.name}${info.units ? ` (${info.units})` : ''}` : r.names ? '' : 'Not in the MIB library: type the values');
-        paintValues(info?.enums ?? null);
-      });
-    };
+    const { test, mib, look } = readingTest(r, repaint);
     let timer;
     const row = h('div', { class: 'reading' },
       h('div', { class: 'reading-head' },
@@ -443,18 +471,11 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
         h('span', { class: 'reading-tools' },
           i > 0 ? h('button', { type: 'button', class: 'icon-btn', title: 'Try this one earlier', 'aria-label': 'Move up', onclick: () => { list.splice(i - 1, 0, list.splice(i, 1)[0]); repaint(); } }, '↑') : null,
           list.length > 1 ? h('button', { type: 'button', class: 'icon-btn', title: 'Remove', 'aria-label': 'Remove reading', onclick: () => { list.splice(i, 1); repaint(); } }, '×') : null)),
-      h('div', { class: 'reading-test' },
-        h('span', { class: 'muted small' }, 'Problem when it'),
-        h('select', {
-          'aria-label': 'Test',
-          onchange: (e) => {
-            const op = e.target.value;
-            const toList = op === 'in' || op === 'not-in';
-            set(toList === isList ? { op } : toList ? { op, values: [], value: undefined } : { op, value: '', values: undefined });
-          },
-        }, Object.entries(OP_LABEL).map(([k, label]) => h('option', { value: k, selected: r.op === k }, label))),
-        enumsBox),
-      mibLine);
+      test,
+      r.where ? h('div', { class: 'reading-where small' },
+        whereText(r.where, name), ' ',
+        h('button', { type: 'button', class: 'linkish', onclick: () => set({ where: undefined }) }, 'Use it for any device')) : null,
+      mib);
     look();
     return row;
   }
@@ -498,10 +519,10 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
         save();
       },
     },
-    h('h3', null, editing.id === 'new' ? 'New problem' : `Edit ${d.name}`),
+    h('h3', null, editing.id === 'new' ? 'New problem definition' : `Edit ${d.name}`),
     h('div', { class: 'field' },
       h('label', { for: 'p-name' }, 'Name'),
-      h('input', { id: 'p-name', value: d.name, placeholder: 'UPS on battery', oninput: (e) => { d.name = e.target.value; } })),
+      h('input', { id: 'p-name', value: d.name, placeholder: 'e.g. UPS battery low', oninput: (e) => { d.name = e.target.value; } })),
     h('div', { class: 'field' },
       h('label', null, 'Severity'),
       sevPick,
@@ -527,7 +548,7 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
         h('span', null, 'Send a resolved alert when it clears'))),
     h('div', { class: 'form-actions' },
       h('button', { type: 'button', class: 'btn ghost', onclick: cancel }, 'Cancel'),
-      h('button', { type: 'submit', class: 'btn primary' }, editing.id === 'new' ? 'Add problem' : 'Save')));
+      h('button', { type: 'submit', class: 'btn primary' }, editing.id === 'new' ? 'Add definition' : 'Save')));
   }
 
   function paint() {
@@ -536,7 +557,8 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
       problems.map((p) => (editing?.id === p.id ? (p.kind === 'down' ? downForm() : valueForm()) : card(p))));
   }
 
-  paint();
+  if (draft) startNew(draft);
+  else paint();
   return { add: chooser, busy: () => Boolean(editing) };
 }
 
@@ -544,7 +566,7 @@ export function renderProblemsSection(box, { state, problems, onChanged }) {
 function modalChooser(onPick) {
   let close = () => {};
   const list = h('div', { class: 'preset-list' },
-    h('p', { class: 'muted small' }, 'Start from one of these and change anything you like.'),
+    h('p', { class: 'muted small' }, 'Start from one of these and change anything you like. Each monitor where it holds has an open problem.'),
     PRESETS.map((p) => h('button', {
       type: 'button',
       class: 'preset',
@@ -558,7 +580,7 @@ function modalChooser(onPick) {
     p.key !== 'blank' && p.config.readings[0].source === 'oid'
       ? h('span', { class: 'preset-reads small' }, `Reads ${p.config.readings.map((r) => r.label).join(', ')}`)
       : null)));
-  close = modal('Add a problem', list, []);
+  close = modal('New problem definition', list, []);
   list.querySelector('.preset')?.focus();
 }
 
@@ -678,7 +700,7 @@ export function monitoredData(list, m) {
     if (x.state === 'notSnmp') data = h('span', { class: 'muted' }, 'Only SNMP monitors have values to read');
     else if (x.state === 'unknown') {
       data = h('span', null, h('span', { class: 'problem-unknown' }, `Answers none of the ${readings.length} reading${readings.length === 1 ? '' : 's'}`), ' · ',
-        h('a', { href: `#/monitor/${m.id}/snmp` }, 'find its value in All data'));
+        h('a', { class: 'pick-link', href: `#/monitor/${m.id}/snmp?pick=${x.problem.id}` }, 'Pick a value'));
     } else if (r) data = h('span', { class: 'mon-data-what' }, r.label ? h('span', { class: 'mon-data-label' }, r.label) : null, oidCell(r));
     else data = h('span', { class: 'muted' }, `${readings.length} readings; the first one it answers`);
     return h('tr', { class: x.state === 'open' ? `sev-row sev-${x.problem.severity}` : '' },
@@ -692,9 +714,146 @@ export function monitoredData(list, m) {
   return h('section', { class: 'card mon-data' },
     h('div', { class: 'card-head' },
       h('h2', null, 'Monitored data'),
-      h('a', { class: 'muted small', href: '#/notifications' }, 'Problems in Notifications')),
-    h('p', { class: 'muted small' }, 'Values problems read from this monitor on every check, by its tags.'),
+      h('a', { class: 'muted small', href: '#/notifications' }, 'Problem definitions')),
+    h('p', { class: 'muted small' }, 'What problem definitions read from this monitor on every check (they pick it by its tags).'),
     h('div', { class: 'open-wrap' }, h('table', { class: 'open-table' },
-      h('thead', null, h('tr', null, ['Problem', 'Data', 'Value now', 'Problem when it', 'State'].map((t) => h('th', null, t)))),
+      h('thead', null, h('tr', null, ['Problem definition', 'Data', 'Value now', 'Problem when it', 'State'].map((t) => h('th', null, t)))),
       h('tbody', null, rows))));
+}
+
+// ---- the All data browser: a value becomes a reading ---------------------------------
+
+const DRAFT_KEY = 'waterfall:newDefinition';
+
+// A definition started from a value (pickValueDialog), for the
+// Notifications page to open. Taken once.
+export function takeDraftDefinition() {
+  try {
+    const d = JSON.parse(sessionStorage.getItem(DRAFT_KEY) ?? 'null');
+    sessionStorage.removeItem(DRAFT_KEY);
+    return d;
+  } catch {
+    return null;
+  }
+}
+
+// "Use in a problem definition" on a row of a monitor's All data: pick the
+// test, which devices it's for, and the definition it goes into (or a new
+// one). entry: { oid, name, value, text }; pickId: the definition the page
+// was opened for ("Pick a value"); vendor: a label to start with.
+export async function pickValueDialog({ monitor, entry, sysObjectId, pickId = null, vendor = '', navigate }) {
+  const [all, info] = await Promise.all([api('problems'), lookupOid(entry.oid)]);
+  const defs = all.filter((p) => p.kind === 'value');
+  const watchState = (d) => {
+    const x = d.coverage?.monitors.find((y) => y.monitorId === monitor.id);
+    if (x) return x.state;
+    return d.coverage?.waiting.includes(monitor.id) ? 'waiting' : 'outside';
+  };
+  const r = {
+    source: 'oid',
+    oid: entry.oid,
+    label: vendor,
+    op: 'in',
+    // empty: its value now is usually the healthy one
+    values: [],
+    current: entry.value,
+  };
+  let target = defs.some((d) => d.id === pickId) ? pickId
+    : defs.find((d) => watchState(d) === 'unknown')?.id ?? 'new';
+  let applies = 'any';
+
+  const testBox = h('div', { class: 'pick-test' });
+  const paintTest = () => {
+    const { test, mib, look } = readingTest(r, paintTest);
+    fill(testBox, test, mib);
+    look();
+  };
+  paintTest();
+
+  const radio = (group, value, current, onPick, ...label) => h('label', { class: 'check pick-radio' },
+    h('input', { type: 'radio', name: group, checked: current === value, onchange: () => onPick(value) }),
+    h('span', null, label));
+  const appliesBox = h('div', { class: 'pick-group' });
+  const paintApplies = () => fill(appliesBox,
+    radio('pick-applies', 'any', applies, (v) => { applies = v; paintApplies(); }, 'Any device that answers it',
+      h('span', { class: 'muted small' }, ' · readings are tried in order, and this one goes last')),
+    sysObjectId ? radio('pick-applies', 'model', applies, (v) => { applies = v; paintApplies(); }, 'Only devices of this model',
+      h('span', { class: 'muted small mono' }, ` · sysObjectID ${sysObjectId}`)) : null,
+    radio('pick-applies', 'monitor', applies, (v) => { applies = v; paintApplies(); }, `Only ${monitor.name}`));
+  paintApplies();
+
+  const NOTE = { unknown: "can't read this monitor yet", open: 'open on this monitor', ok: 'already reads this monitor', waiting: 'not checked yet', outside: `doesn't watch ${monitor.name} (not tagged for it)` };
+  const targetBox = h('div', { class: 'pick-group' });
+  let submit;
+  const paintTarget = () => {
+    fill(targetBox,
+      defs.map((d) => radio('pick-target', d.id, target, (v) => { target = v; paintTarget(); },
+        h('strong', null, d.name), ' ', sevBadge(d.severity),
+        h('span', { class: `small ${watchState(d) === 'unknown' ? 'problem-unknown' : 'muted'}` }, ` · ${NOTE[watchState(d)]}`))),
+      radio('pick-target', 'new', target, (v) => { target = v; paintTarget(); }, h('strong', null, 'A new problem definition'),
+        h('span', { class: 'muted small' }, ` · for monitors tagged like ${monitor.name}`)));
+    if (submit) submit.textContent = target === 'new' ? 'Continue' : 'Add reading';
+  };
+  paintTarget();
+
+  const reading = () => {
+    const out = { source: 'oid', oid: r.oid, op: r.op };
+    if (r.label?.trim()) out.label = r.label.trim();
+    if (r.op === 'in' || r.op === 'not-in') {
+      if (!r.values.length) throw new Error('Pick the values that mean there is a problem');
+      out.values = r.values;
+      if (r.names) out.names = r.names;
+    } else {
+      if (r.value === '' || r.value == null || !Number.isFinite(Number(r.value))) throw new Error('Give a number to compare with');
+      out.value = Number(r.value);
+    }
+    if (applies === 'model') out.where = { sysObjectId };
+    if (applies === 'monitor') out.where = { monitorIds: [monitor.id] };
+    return out;
+  };
+
+  const go = async () => {
+    let add;
+    try {
+      add = reading();
+    } catch (err) {
+      toast(err.message, 'error');
+      return false;
+    }
+    if (target === 'new') {
+      try {
+        sessionStorage.setItem(DRAFT_KEY, JSON.stringify({ name: '', severity: 'warning', config: { tagIds: monitor.tags, readings: [add] } }));
+      } catch {
+        // no session storage: start blank
+      }
+      navigate('#/notifications');
+      return true;
+    }
+    const d = defs.find((x) => x.id === target);
+    try {
+      await api(`problems/${d.id}`, { method: 'PUT', body: { config: { ...d.config, readings: [...d.config.readings, add] } } });
+      toast(`Added to ${d.name}`, 'success');
+      navigate(`#/monitor/${monitor.id}`);
+      return true;
+    } catch (err) {
+      toast(err.message, 'error');
+      return false;
+    }
+  };
+
+  const name = info?.name ?? entry.name;
+  const body = h('div', { class: 'pick-body' },
+    h('div', { class: 'pick-value' },
+      h('div', null, h('strong', null, name ?? 'Unnamed value'), info?.module ? h('span', { class: 'muted small' }, ` · ${info.module}`) : null),
+      h('div', { class: 'mono small muted' }, entry.oid),
+      h('div', { class: 'small' }, 'Now: ', h('span', { class: 'mono' }, entry.text ?? String(entry.value ?? '—')),
+        info?.enums ? h('span', { class: 'muted' }, ' (underlined below)') : null)),
+    testBox,
+    h('div', { class: 'field' },
+      h('label', { for: 'pick-label' }, 'Label'),
+      h('input', { id: 'pick-label', value: r.label, placeholder: 'e.g. APC', oninput: (e) => { r.label = e.target.value; } })),
+    h('div', { class: 'field' }, h('label', null, 'Use it for'), appliesBox),
+    h('div', { class: 'field' }, h('label', null, 'Add it to'), targetBox));
+  modal('Use in a problem definition', body, [{ label: target === 'new' ? 'Continue' : 'Add reading', onClick: go }]);
+  submit = [...document.querySelectorAll('.modal-actions .btn.primary')].pop();
 }

@@ -10,6 +10,8 @@
 //                        from what the SNMP check collects; disk = the fullest)
 //                op      'in' | 'not-in' (values) or '<' '<=' '>' '>=' (value)
 //                names   { "5": "battery" }, for values no loaded MIB names
+//                where   { sysObjectId?, monitorIds? }: only devices of that
+//                        model (sysObjectID, exact) or only those monitors
 //   checks     how many checks in a row before it opens (default 1)
 //   recovery   send a resolved alert when it clears (default true)
 //   downstream list everything below the monitor in its alert (default false)
@@ -83,10 +85,20 @@ export function testReading(reading, value) {
   }
 }
 
+// Whether a reading is meant for this monitor at all.
+export function readingApplies(reading, monitor, result) {
+  const w = reading.where;
+  if (!w) return true;
+  if (w.monitorIds?.length && !w.monitorIds.includes(monitor?.id)) return false;
+  if (w.sysObjectId && String(result?.data?.system?.objectId ?? '').replace(/^\./, '') !== w.sysObjectId) return false;
+  return true;
+}
+
 // { state: 'open' | 'ok' | 'unknown', value?, reading? } for one check.
-export function evaluate(problem, result) {
+export function evaluate(problem, result, monitor = null) {
   const readings = problem.config.readings ?? [];
   for (let i = 0; i < readings.length; i++) {
+    if (!readingApplies(readings[i], monitor, result)) continue;
     const got = readValue(readings[i], result);
     if (!got) continue;
     return { state: testReading(readings[i], got.value) ? 'open' : 'ok', value: got.text, reading: i };
@@ -122,6 +134,17 @@ function normalizeReading(r, i) {
   }
   const label = text(r.label, 60);
   if (label) out.label = label;
+  if (r.where && typeof r.where === 'object') {
+    const scope = {};
+    const sys = text(r.where.sysObjectId, 400).replace(/^\./, '');
+    if (sys) {
+      if (!isOid(sys)) throw new HttpError(400, `${where}: "${sys}" is not a sysObjectID`);
+      scope.sysObjectId = sys;
+    }
+    const ids = idList(r.where.monitorIds);
+    if (ids?.length) scope.monitorIds = [...new Set(ids)].slice(0, 500);
+    if (Object.keys(scope).length) out.where = scope;
+  }
   if (r.names && typeof r.names === 'object') {
     const names = Object.fromEntries(Object.entries(r.names).slice(0, 100).map(([k, v]) => [text(k, 40), text(v, 60)]).filter(([k, v]) => k && v));
     if (Object.keys(names).length) out.names = names;

@@ -197,7 +197,7 @@ function onState() {
   if (r?.name === 'monitor') renderDetail(r.id, true);
   if (r?.name === 'alerts') paintUnresolved?.(state);
   // opened by a link before the monitors had loaded
-  if (r?.name === 'snmp' && !$('#main .snmp-browser') && state.byId.has(r.id)) renderSnmpBrowser($('#main'), state.byId.get(r.id));
+  if (r?.name === 'snmp' && !$('#main .snmp-browser') && state.byId.has(r.id)) renderSnmpBrowser($('#main'), state.byId.get(r.id), { pick: r.pick, navigate: go });
 }
 
 // ---- header summary -------------------------------------------------------
@@ -1462,7 +1462,7 @@ function parseRoute() {
   const params = new URLSearchParams(qs);
   const parts = path.split('/').filter(Boolean);
   if (parts[0] === 'monitor' && parts[2] === 'edit') return { name: 'edit', id: Number(parts[1]) };
-  if (parts[0] === 'monitor' && parts[2] === 'snmp') return { name: 'snmp', id: Number(parts[1]) };
+  if (parts[0] === 'monitor' && parts[2] === 'snmp') return { name: 'snmp', id: Number(parts[1]), pick: params.get('pick') ? Number(params.get('pick')) : null };
   if (parts[0] === 'monitor') return { name: 'monitor', id: Number(parts[1]) };
   if (parts[0] === 'add') return { name: 'add', parent: params.get('parent') ? Number(params.get('parent')) : null };
   if (parts[0] === 'alerts') return { name: 'alerts' };
@@ -1490,7 +1490,7 @@ async function route() {
   try {
     if (r.name === 'dashboard') await renderDashboard();
     else if (r.name === 'monitor') await renderDetail(r.id);
-    else if (r.name === 'snmp') await renderSnmpBrowser($('#main'), state.byId.get(r.id));
+    else if (r.name === 'snmp') await renderSnmpBrowser($('#main'), state.byId.get(r.id), { pick: r.pick, navigate: go });
     else if (r.name === 'edit') await renderMonitorForm($('#main'), { state, id: r.id, navigate: go });
     else if (r.name === 'add') await renderMonitorForm($('#main'), { state, presetParent: r.parent, navigate: go });
     else if (r.name === 'alerts') await renderAlerts();

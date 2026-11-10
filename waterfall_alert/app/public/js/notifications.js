@@ -8,7 +8,7 @@ import { tagPill, matchToggle, matchIcon, tagExprEditor, TAG_MATCH } from './tag
 import { parseTagExpr, exprName } from './filter.js';
 import { ruleTagTest, ruleProblem, SEVERITIES } from './rules.js';
 import { renderNotificationForm } from './forms.js';
-import { renderProblemsSection, sevBadge, PROBLEM_KINDS } from './problems.js';
+import { renderProblemsSection, sevBadge, PROBLEM_KINDS, takeDraftDefinition } from './problems.js';
 
 export { PROBLEM_KINDS };
 
@@ -196,7 +196,7 @@ export async function renderNotifications(main, { state, editing: addingChannel 
           option(!rule.problemIds.length && !rule.minSeverity, 'Any problem', () => change({ problemIds: [], minSeverity: '' })),
           option(!rule.problemIds.length && rule.minSeverity === 'warning', 'Warning or worse', () => change({ problemIds: [], minSeverity: 'warning' })),
           option(!rule.problemIds.length && rule.minSeverity === 'severe', 'Any severe problem', () => change({ problemIds: [], minSeverity: 'severe' }))),
-        h('div', { class: 'rule-pop-title' }, 'Or these problems'),
+        h('div', { class: 'rule-pop-title' }, 'Or only problems from'),
         h('div', { class: 'rule-opts' },
           problems.map((p) => option(rule.problemIds.includes(p.id), p.name, () => change({ problemIds: toggleIn(rule.problemIds, p.id), minSeverity: '' }), [' ', sevBadge(p.severity)]))));
     } else if (open.expr) {
@@ -348,7 +348,9 @@ export async function renderNotifications(main, { state, editing: addingChannel 
 
   // ---- problems -----------------------------------------------------------------
 
-  const problemsCtl = renderProblemsSection(problemsBox, { state, problems, onChanged: () => reload() });
+  // a definition started from a value in a monitor's All data
+  const draft = takeDraftDefinition();
+  const problemsCtl = renderProblemsSection(problemsBox, { state, problems, onChanged: () => reload(), draft });
 
   fill(main, h('div', { class: 'stack' },
     h('div', { class: 'page-head' },
@@ -365,11 +367,12 @@ export async function renderNotifications(main, { state, editing: addingChannel 
     channelsBox,
     h('div', { class: 'page-head section-head' },
       h('div', null,
-        h('h2', null, 'Problems'),
-        h('p', { class: 'muted' }, 'What a rule can alert about. Besides a monitor going down, a problem can watch an SNMP value on the monitors with certain tags, such as a UPS running on battery.')),
-      h('button', { class: 'btn primary', onclick: () => problemsCtl.add() }, '+ Add problem')),
+        h('h2', null, 'Problem definitions'),
+        h('p', { class: 'muted' }, 'What counts as a problem, for rules to alert on. Besides a monitor going down, a definition can watch an SNMP value on the monitors with certain tags, such as a UPS running on battery. Wherever it holds, that monitor has an open problem.')),
+      h('button', { class: 'btn primary', onclick: () => problemsCtl.add() }, '+ Add definition')),
     problemsBox));
   paintRules();
   paintChannels();
   if (addingChannel) showForm(null);
+  if (draft) requestAnimationFrame(() => problemsBox.querySelector('.problem-form')?.scrollIntoView({ block: 'start' }));
 }

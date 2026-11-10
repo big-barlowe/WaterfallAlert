@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.0
+
+- **Pick a value from All data.** Every row of a monitor's *All data* has **+ Problem**: choose the values that mean trouble (named from the MIB, with the value it has now underlined) or a number to compare with, and add it as a reading to a problem definition, or start a new definition from it with the monitor's tags filled in.
+- A monitor that a definition **can't read** gets **Pick a value** (on the definition's card and the monitor's *Monitored data*), which opens its *All data* with a banner saying what you're looking for, so an unusual UPS is one click away from being covered.
+- A reading can be kept to **devices of one model** (`sysObjectID`) or **certain monitors**, for when makes disagree about what a value means.
+- **Wording:** what you set up on the Notifications page is now a **problem definition**; a **problem** is one that's happening (open on a monitor). Buttons, headings and the docs follow.
+
 ## 0.12.1
 
 - **Monitored data** on a monitor's page: every problem that reads a value from it, with the reading it answered (and the OID's name), the value now, what opens the problem, and whether it's open, OK or can't be read.
