@@ -8,6 +8,7 @@ import { DISPLAY_KEYS, snmpBrowse } from './checkers/snmp.js';
 import { isOid } from './snmp.js';
 import { buildLibrary, mibLibrary, parseMib, setMibLibrary, splitModules } from './mib.js';
 import { parseTagExpr, renameInExpr } from '../public/js/filter.js';
+import { normalizeValueProblem, inScope, SEVERITIES } from './problems.js';
 
 // A monitor's config without the keys that only change how its data is
 // shown, to tell whether what it checks has changed.
@@ -125,6 +126,7 @@ export function createApi({ store, engine, icons }) {
       m.tags = tagMap.get(m.id) ?? [];
     }
     snap.tags = store.listTags();
+    snap.problems = store.listProblems().map(({ id, kind, name, severity }) => ({ id, kind, name, severity }));
     return snap;
   });
 
@@ -305,6 +307,16 @@ export function createApi({ store, engine, icons }) {
 
   route('GET', '/api/mibs', () => ({ modules: mibLibrary().list() }));
 
+  // What the MIBs know about an OID: { name, module, enums, units, desc } or null.
+  route('GET', '/api/mibs/object', ({ query }) => {
+    const oid = String(query.oid ?? '').trim().replace(/^\./, '');
+    if (!isOid(oid)) return null;
+    const hit = mibLibrary().label(oid);
+    if (!hit) return null;
+    const syn = hit.entry.syntax ?? {};
+    return { name: hit.name, module: hit.entry.module, type: syn.tc ?? syn.base ?? null, enums: syn.enums ?? null, units: hit.entry.units ?? null, desc: hit.entry.desc ?? null };
+  });
+
   // { files: [{ filename, text }] }. Each module in a file is stored on its
   // own, replacing an uploaded or bundled one of the same name.
   route('POST', '/api/mibs', ({ body }) => {
@@ -404,6 +416,10 @@ export function createApi({ store, engine, icons }) {
         for (const r of store.listRules()) {
           const expr = r.tagExpr && renameInExpr(r.tagExpr, existing.name, t.name);
           if (expr && expr !== r.tagExpr) store.updateRule(r.id, { ...r, tagExpr: expr });
+        }
+        for (const p of store.listProblems()) {
+          const expr = p.config.tagExpr && renameInExpr(p.config.tagExpr, existing.name, t.name);
+          if (expr && expr !== p.config.tagExpr) store.updateProblem(p.id, { ...p, config: { ...p.config, tagExpr: expr } });
         }
       }
     });
@@ -550,6 +566,7 @@ export function createApi({ store, engine, icons }) {
     return {
       channelIds: pick('channelIds', store.listNotifications()),
       problemIds: pick('problemIds', store.listProblems()),
+      minSeverity: SEVERITIES[body.minSeverity ?? base.minSeverity] ? (body.minSeverity ?? base.minSeverity) : '',
       tagIds: tagExpr ? [] : (idList(body.tagIds) ?? base.tagIds ?? []),
       tagMatch: (body.tagMatch ?? base.tagMatch) === 'all' ? 'all' : 'any',
       tagExpr,
@@ -572,17 +589,91 @@ export function createApi({ store, engine, icons }) {
     return { ok: true };
   });
 
-  route('GET', '/api/problems', () => store.listProblems());
+  // Value problems come with who they watch: [{ monitorId, state, since, value }]
+  // for each watched monitor that has been read, and `waiting` for the rest
+  // (SNMP monitors not checked since), `notSnmp` for tagged monitors that
+  // can't be read at all.
+  const problemsWithCoverage = () => {
+    const tags = store.listTags();
+    const tagMap = store.monitorTagMap();
+    const state = engine.problemState();
+    return store.listProblems().map((p) => {
+      if (p.kind !== 'value') return p;
+      const watched = [];
+      const notSnmp = [];
+      const tagged = p.config.tagExpr || p.config.tagIds.length;
+      for (const m of engine.monitors.values()) {
+        if (!m.active || m.type === 'group' || !inScope(p, tagMap.get(m.id) ?? [], tags)) continue;
+        if (m.type === 'snmp') watched.push(m.id);
+        else if (tagged) notSnmp.push(m.id);
+      }
+      const known = new Map(state.filter((x) => x.problemId === p.id).map((x) => [x.monitorId, x]));
+      return {
+        ...p,
+        coverage: {
+          monitors: watched.filter((id) => known.has(id)).map((id) => known.get(id)),
+          waiting: watched.filter((id) => !known.has(id)),
+          notSnmp,
+        },
+      };
+    });
+  };
+
+  const problemOr404 = (id) => store.getProblem(Number(id)) ?? (() => { throw new HttpError(404, 'Problem not found'); })();
+
+  // The SNMP monitors a problem watches, to check straight away after a change.
+  const watchedBy = (p) => {
+    const tags = store.listTags();
+    const tagMap = store.monitorTagMap();
+    return store.listMonitors().filter((m) => m.type === 'snmp' && inScope(p, tagMap.get(m.id) ?? [], tags)).map((m) => m.id);
+  };
+
+  route('GET', '/api/problems', () => problemsWithCoverage());
+
+  route('POST', '/api/problems', ({ body }) => {
+    const p = { kind: 'value', ...normalizeValueProblem(body, undefined, store.listTags()) };
+    const id = store.createProblem(p);
+    engine.reload(watchedBy(p));
+    return problemsWithCoverage().find((x) => x.id === id);
+  });
 
   route('PUT', '/api/problems/:id', ({ params, body }) => {
-    const existing = store.getProblem(Number(params.id));
-    if (!existing) throw new HttpError(404, 'Problem not found');
-    const name = String(body.name ?? existing.name).trim();
-    if (!name) throw new HttpError(400, 'Name is required');
-    const config = { ...existing.config };
-    if (existing.kind === 'down' && body.config?.recovery != null) config.recovery = Boolean(body.config.recovery);
-    store.updateProblem(existing.id, { name, config });
-    return store.getProblem(existing.id);
+    const existing = problemOr404(params.id);
+    if (existing.kind === 'down') {
+      const name = String(body.name ?? existing.name).trim();
+      if (!name) throw new HttpError(400, 'Name is required');
+      const config = { ...existing.config };
+      if (body.config?.recovery != null) config.recovery = Boolean(body.config.recovery);
+      store.updateProblem(existing.id, { name, severity: 'severe', config });
+    } else {
+      const next = normalizeValueProblem(body, existing, store.listTags());
+      store.updateProblem(existing.id, next);
+      // check the monitors it watched and watches now
+      engine.reload([...new Set([...watchedBy(existing), ...watchedBy({ ...existing, ...next })])]);
+    }
+    return problemsWithCoverage().find((x) => x.id === existing.id);
+  });
+
+  // Rules that named only this problem would become "any problem" without
+  // it, so they go too (the page warns first); others just drop it.
+  route('DELETE', '/api/problems/:id', ({ params }) => {
+    const existing = problemOr404(params.id);
+    if (existing.kind === 'down') throw new HttpError(400, 'The built-in problem can not be deleted');
+    let rulesDeleted = 0;
+    store.tx(() => {
+      for (const r of store.listRules()) {
+        if (!r.problemIds.includes(existing.id)) continue;
+        const rest = r.problemIds.filter((id) => id !== existing.id);
+        if (rest.length) store.updateRule(r.id, { ...r, problemIds: rest });
+        else {
+          store.deleteRule(r.id);
+          rulesDeleted++;
+        }
+      }
+      store.deleteProblem(existing.id);
+    });
+    engine.forgetProblem(existing.id);
+    return { ok: true, rulesDeleted };
   });
 
   // ---- alert log & settings -------------------------------------------------

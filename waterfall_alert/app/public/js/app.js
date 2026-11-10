@@ -7,6 +7,7 @@ import { renderNotifications } from './notifications.js';
 import { tagPill, colorPicker, newTagDialog, matchIcon, matchToggle, tagExprEditor, TAG_MATCH, tagIconView } from './tags.js';
 import { parseTagExpr, exprName } from './filter.js';
 import { snmpSnapshot, snmpSummary, snmpSections, renderSnmpBrowser, mibLibraryCard } from './snmp.js';
+import { monitorSeverity, unresolvedTable, sevBadge, SEVERITIES } from './problems.js';
 
 const POLL_MS = 3000;
 const $ = (sel) => document.querySelector(sel);
@@ -159,6 +160,15 @@ async function poll() {
       state.byId = new Map(s.monitors.map((m) => [m.id, m]));
       state.tags = s.tags ?? [];
       state.tagById = new Map(state.tags.map((t) => [t.id, t]));
+      // Open problems: monitors down and value problems (problems.js).
+      state.problems = s.problems ?? [];
+      state.open = s.open ?? [];
+      const pname = new Map(state.problems.map((p) => [p.id, p]));
+      for (const m of state.monitors) {
+        m.sev = monitorSeverity(m, state.open);
+        m.issues = state.open.filter((x) => x.monitorId === m.id && pname.get(x.problemId)?.kind !== 'down')
+          .map((x) => ({ name: pname.get(x.problemId)?.name ?? 'Problem', severity: x.severity, value: x.value }));
+      }
       const known = [...ui.tagFilter].filter((t) => state.tagById.has(t));
       if (known.length !== ui.tagFilter.size) {
         ui.tagFilter = new Set(known);
@@ -185,6 +195,7 @@ function onState() {
   const r = ui.route;
   if (r?.name === 'dashboard') renderDashboard(true);
   if (r?.name === 'monitor') renderDetail(r.id, true);
+  if (r?.name === 'alerts') paintUnresolved?.(state);
   // opened by a link before the monitors had loaded
   if (r?.name === 'snmp' && !$('#main .snmp-browser') && state.byId.has(r.id)) renderSnmpBrowser($('#main'), state.byId.get(r.id));
 }
@@ -376,6 +387,15 @@ function exprEditor(box) {
   });
 }
 
+// A monitor's open problems in the list: a small mark for warning/severe.
+function sevMark(m) {
+  if (!m.sev || m.sev === 'info') return null;
+  return h('span', {
+    class: `sev-mark sev-${m.sev}`,
+    title: m.issues.map((i) => `${SEVERITIES[i.severity].label}: ${i.name}${i.value ? ` (${i.value})` : ''}`).join('\n'),
+  }, '!');
+}
+
 function tagDots(m) {
   const tags = tagsOf(m);
   if (!tags.length) return null;
@@ -460,6 +480,7 @@ function row(m, parentId, path, depth, hasKids) {
       ? h('span', { class: `row-icon${m.icon ? '' : ' bare'}` }, iconEl(m.icon, 18), h('span', { class: `dot ${m.status}`, title: STATUS_LABEL[m.status] }))
       : h('span', { class: `dot ${m.status}`, title: STATUS_LABEL[m.status] }),
     h('span', { class: 'row-name' }, m.name),
+    sevMark(m),
     tagDots(m),
     otherParents.length ? h('span', { class: 'also', title: `Also under: ${otherParents.join(', ')}` }, '⑂') : null),
   ui.editMode
@@ -1128,20 +1149,39 @@ async function action(path, done) {
 
 // ---- alerts log -------------------------------------------------------------
 
+let paintUnresolved = null;
+
+const ALERT_BADGE = {
+  down: ['down', 'Alert'],
+  up: ['up', 'Resolved'],
+  resolved: ['up', 'Resolved'],
+  test: ['up', 'Test'],
+};
+
 async function renderAlerts() {
   const list = await api('alerts');
+  const openBox = h('div', { class: 'card open-card' });
+  paintUnresolved = unresolvedTable(openBox);
   fill($('#main'), h('div', { class: 'stack' },
-    h('div', { class: 'page-head' }, h('h1', null, 'Alerts sent'),
+    h('div', { class: 'page-head' }, h('h1', null, 'Unresolved'),
+      h('p', { class: 'muted' }, 'Monitors that are down, and problems that are still open. Blocked monitors are listed in the alert of the one that\'s down.')),
+    openBox,
+    h('div', { class: 'page-head section-head' }, h('h2', null, 'Alerts sent'),
       h('p', { class: 'muted' }, 'One alert per root cause. Everything cut off downstream is listed in the body instead of alerting on its own.')),
-    list.length ? list.map((a) => h('article', { class: `card alert ${a.kind}` },
-      h('div', { class: 'card-head' },
-        h('h3', null, h('span', { class: `badge ${a.kind === 'down' ? 'down' : 'up'}` }, a.kind === 'down' ? 'Alert' : 'Resolved'), ' ', a.title),
-        h('span', { class: 'muted small nowrap' }, fmtTime(a.time))),
-      h('pre', { class: 'alert-body' }, a.message),
-      h('div', { class: 'delivered' },
-        a.delivered.length
-          ? a.delivered.map((d) => h('span', { class: `chip ${d.ok ? 'ok' : 'fail'}`, title: d.error || 'Delivered' }, d.ok ? '✓ ' : '✗ ', d.name))
-          : h('span', { class: 'muted small' }, 'Not sent: no notification rule matched')))) : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No alerts yet. Calm waters.'))));
+    list.length ? list.map((a) => {
+      const [cls, label] = a.kind === 'problem' ? [`sev-${a.severity}`, SEVERITIES[a.severity]?.label ?? 'Problem'] : ALERT_BADGE[a.kind] ?? ['up', a.kind];
+      // not `problem`: that class is the Problems page's cards
+      return h('article', { class: `card alert ${a.kind === 'problem' ? `alert-problem sev-${a.severity}` : a.kind}` },
+        h('div', { class: 'card-head' },
+          h('h3', null, a.kind === 'problem' ? sevBadge(a.severity) : h('span', { class: `badge ${cls}` }, label), ' ', a.title),
+          h('span', { class: 'muted small nowrap' }, fmtTime(a.time))),
+        h('pre', { class: 'alert-body' }, a.message),
+        h('div', { class: 'delivered' },
+          a.delivered.length
+            ? a.delivered.map((d) => h('span', { class: `chip ${d.ok ? 'ok' : 'fail'}`, title: d.error || 'Delivered' }, d.ok ? '✓ ' : '✗ ', d.name))
+            : h('span', { class: 'muted small' }, 'Not sent: no notification rule matched')));
+    }) : h('div', { class: 'card' }, h('p', { class: 'muted' }, 'No alerts yet. Calm waters.'))));
+  paintUnresolved(state);
 }
 
 // ---- tags -------------------------------------------------------------------

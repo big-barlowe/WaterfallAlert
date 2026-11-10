@@ -3,14 +3,21 @@
 // page, and the monitor form's "where its alerts go"). It imports only
 // filter.js, so it loads under Node too.
 //
-// A rule is { id, channelIds, problemIds, tagIds, tagMatch, tagExpr, downstream }.
-//   problemIds  empty = every problem
+// A rule is { id, channelIds, problemIds, minSeverity, tagIds, tagMatch, tagExpr, downstream }.
+//   problemIds  empty = every problem (of at least minSeverity, if set)
 //   tags        tagExpr if set (see filter.js), otherwise tagIds combined by
 //               tagMatch ('any' | 'all'); no tags at all = every monitor
 //   downstream  the rule also fires when the monitor at fault is untagged but
 //               takes tagged monitors down with it (or brings them back)
 
 import { parseTagExpr } from './filter.js';
+
+// Problem severities, least to most. Monitor down is always severe.
+export const SEVERITIES = {
+  info: { rank: 1, label: 'Info' },
+  warning: { rank: 2, label: 'Warning' },
+  severe: { rank: 3, label: 'Severe' },
+};
 
 // { test(tagIds) } or { error } for a rule that cannot match anything any
 // more (its tags were deleted, or its expression no longer parses).
@@ -29,7 +36,9 @@ export function ruleTagTest(rule, tags) {
     : { test: (ids) => live.some((t) => ids.includes(t)) };
 }
 
-export const ruleHasProblem = (rule, problemId) => !rule.problemIds.length || rule.problemIds.includes(problemId);
+export const ruleHasProblem = (rule, problemId, severity) => (rule.problemIds.length
+  ? rule.problemIds.includes(problemId)
+  : !rule.minSeverity || (SEVERITIES[severity]?.rank ?? 0) >= (SEVERITIES[rule.minSeverity]?.rank ?? 0));
 
 // What keeps a rule from sending anything, or null.
 export function ruleProblem(rule, { tags, channels }) {
@@ -42,11 +51,11 @@ export function ruleProblem(rule, { tags, channels }) {
 // The channels (ids) that hear about a problem with `monitorId`, given the
 // monitors the alert lists as affected. `tagsOf(id)` returns a monitor's tag
 // ids. Returns { channelIds: Set, ruleIds: [] }.
-export function matchRules({ rules, tags, tagsOf }, { problemId, monitorId, affectedIds = [] }) {
+export function matchRules({ rules, tags, tagsOf }, { problemId, severity, monitorId, affectedIds = [] }) {
   const channelIds = new Set();
   const ruleIds = [];
   for (const rule of rules) {
-    if (!ruleHasProblem(rule, problemId)) continue;
+    if (!ruleHasProblem(rule, problemId, severity)) continue;
     const { test, error } = ruleTagTest(rule, tags);
     if (error) continue;
     const hit = test(tagsOf(monitorId)) || (rule.downstream && affectedIds.some((id) => test(tagsOf(id))));

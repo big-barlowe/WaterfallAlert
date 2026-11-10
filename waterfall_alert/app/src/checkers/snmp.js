@@ -84,7 +84,9 @@ const plain = (vb) => {
 // Index (last arc) -> value for one walked column.
 const byIndex = (vbs, base) => new Map(vbs.map((vb) => [vb.oid.slice(base.length + 1), vb]));
 
-export async function checkSnmp(monitor, { previous } = {}) {
+// `probe`: OIDs the monitor's problems need (problems.js); their values come
+// back as `result.probe` ({ [oid]: { value, text } }, value null if missing).
+export async function checkSnmp(monitor, { previous, probe = [] } = {}) {
   const c = monitor.config ?? {};
   if (!c.host) throw new Error('Host is required');
   const extra = parseExtraOids(c.oids);
@@ -109,6 +111,26 @@ export async function checkSnmp(monitor, { previous } = {}) {
     const deadline = Date.now() + budget + 3000;
     const notes = [];
     const opts = () => ({ timeout: Math.max(300, Math.min(2500, deadline - Date.now())), retries: 1 });
+
+    // Values problems watch go first, so the walks can't crowd them out.
+    let probed;
+    if (probe.length) {
+      probed = {};
+      try {
+        const lib = mibLibrary();
+        const vbs = [];
+        for (let i = 0; i < probe.length; i += 20) vbs.push(...await client.get(probe.slice(i, i + 20), opts()));
+        probe.forEach((oid, i) => {
+          const value = plain(vbs[i]);
+          if (value == null) return void (probed[oid] = { value: null, text: null });
+          const { text, raw } = formatValue(lib.label(oid)?.entry, vbs[i], lib);
+          probed[oid] = { value, text: raw != null && raw !== text ? `${text} (${raw})` : text };
+        });
+      } catch (err) {
+        notes.push(`Problem values: ${err.message}`);
+        probed = undefined; // couldn't tell, rather than "no such value"
+      }
+    }
     const walk = async (base) => {
       if (Date.now() > deadline) return [];
       try {
@@ -151,7 +173,7 @@ export async function checkSnmp(monitor, { previous } = {}) {
     const interfaces = interfacesFrom(cols);
     addRates(interfaces, previous, at, system.uptime);
     const data = { at, system, interfaces, ...resourcesFrom(hr), custom, notes };
-    return { ok: true, ping, msg: cardText(data, c) || 'SNMP OK', data };
+    return { ok: true, ping, msg: cardText(data, c) || 'SNMP OK', data, probe: probed };
   } finally {
     client.close();
   }

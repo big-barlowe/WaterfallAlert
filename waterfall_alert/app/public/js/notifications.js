@@ -6,16 +6,11 @@
 import { api, h, svg, fill, toast, confirmDialog } from './util.js';
 import { tagPill, matchToggle, matchIcon, tagExprEditor, TAG_MATCH } from './tags.js';
 import { parseTagExpr, exprName } from './filter.js';
-import { ruleTagTest, ruleProblem } from './rules.js';
+import { ruleTagTest, ruleProblem, SEVERITIES } from './rules.js';
 import { renderNotificationForm } from './forms.js';
+import { renderProblemsSection, sevBadge, PROBLEM_KINDS } from './problems.js';
 
-// What each kind of problem means. Only the built-in one exists so far.
-export const PROBLEM_KINDS = {
-  down: {
-    label: 'Built in',
-    text: 'A monitor fails its check (after its retries) while everything it depends on is up. One alert names it and lists every monitor cut off below it. Reminders follow if the monitor has a reminder interval.',
-  },
-};
+export { PROBLEM_KINDS };
 
 // Row action icons (24x24, stroked). Not in icons.js's GLYPHS, which are
 // monitor icons.
@@ -59,7 +54,7 @@ export async function renderNotifications(main, { state, editing: addingChannel 
     if (open?.expr) document.getElementById('rule-expr-input')?.focus();
   }
 
-  const RULE_KEYS = ['channelIds', 'problemIds', 'tagIds', 'tagMatch', 'tagExpr', 'downstream'];
+  const RULE_KEYS = ['channelIds', 'problemIds', 'minSeverity', 'tagIds', 'tagMatch', 'tagExpr', 'downstream'];
   const ruleBody = (r) => Object.fromEntries(RULE_KEYS.map((k) => [k, r[k]]));
   const changed = () => editing.id === 'new'
     || JSON.stringify(ruleBody(editing.draft)) !== JSON.stringify(ruleBody(rules.find((r) => r.id === editing.id)));
@@ -79,7 +74,7 @@ export async function renderNotifications(main, { state, editing: addingChannel 
   function addRule() {
     editing = {
       id: 'new',
-      draft: { channelIds: channels.length === 1 ? [channels[0].id] : [], problemIds: [], tagIds: [], tagMatch: 'any', tagExpr: '', downstream: true },
+      draft: { channelIds: channels.length === 1 ? [channels[0].id] : [], problemIds: [], minSeverity: '', tagIds: [], tagMatch: 'any', tagExpr: '', downstream: true },
     };
     open = { slot: channels.length === 1 ? 'tags' : 'channels' };
     paintRules();
@@ -132,12 +127,12 @@ export async function renderNotifications(main, { state, editing: addingChannel 
     };
   };
 
+  const SEV_ANY = { warning: 'warning or worse', severe: 'any severe problem', info: 'any problem' };
   const problemPart = (rule) => {
     const picked = problems.filter((p) => rule.problemIds.includes(p.id));
-    return {
-      title: picked.map((p) => p.name).join(', ') || 'Any problem',
-      content: picked.length ? picked.map((p) => h('span', { class: 'rule-chip' }, p.name)) : 'any problem',
-    };
+    if (picked.length) return { title: picked.map((p) => p.name).join(', '), content: picked.map((p) => h('span', { class: `rule-chip sev-chip sev-${p.severity}` }, p.name)) };
+    const any = SEV_ANY[rule.minSeverity] ?? 'any problem';
+    return { title: any[0].toUpperCase() + any.slice(1), content: rule.minSeverity && rule.minSeverity !== 'info' ? h('span', { class: `rule-chip sev-chip sev-${rule.minSeverity}` }, any) : any };
   };
 
   const tagPart = (rule) => {
@@ -198,8 +193,12 @@ export async function renderNotifications(main, { state, editing: addingChannel 
       fill(box,
         h('div', { class: 'rule-pop-title' }, 'When'),
         h('div', { class: 'rule-opts' },
-          option(!rule.problemIds.length, 'Any problem', () => change({ problemIds: [] })),
-          problems.map((p) => option(rule.problemIds.includes(p.id), p.name, () => change({ problemIds: toggleIn(rule.problemIds, p.id) })))));
+          option(!rule.problemIds.length && !rule.minSeverity, 'Any problem', () => change({ problemIds: [], minSeverity: '' })),
+          option(!rule.problemIds.length && rule.minSeverity === 'warning', 'Warning or worse', () => change({ problemIds: [], minSeverity: 'warning' })),
+          option(!rule.problemIds.length && rule.minSeverity === 'severe', 'Any severe problem', () => change({ problemIds: [], minSeverity: 'severe' }))),
+        h('div', { class: 'rule-pop-title' }, 'Or these problems'),
+        h('div', { class: 'rule-opts' },
+          problems.map((p) => option(rule.problemIds.includes(p.id), p.name, () => change({ problemIds: toggleIn(rule.problemIds, p.id), minSeverity: '' }), [' ', sevBadge(p.severity)]))));
     } else if (open.expr) {
       const pillsText = tags().filter((t) => rule.tagIds.includes(t.id)).map((t) => exprName(t.name)).join(rule.tagMatch === 'all' ? ' & ' : ' | ');
       tagExprEditor(box, {
@@ -349,45 +348,7 @@ export async function renderNotifications(main, { state, editing: addingChannel 
 
   // ---- problems -----------------------------------------------------------------
 
-  function paintProblems(editingId = null) {
-    fill(problemsBox, problems.map((p) => {
-      const kind = PROBLEM_KINDS[p.kind] ?? { label: p.kind, text: '' };
-      if (p.id === editingId) return problemForm(p);
-      return h('div', { class: 'card problem' },
-        h('div', { class: 'problem-main' },
-          h('h3', null, p.name, ' ', h('span', { class: 'problem-kind' }, kind.label)),
-          h('p', { class: 'muted small' }, kind.text),
-          p.kind === 'down' ? h('p', { class: 'small' }, p.config.recovery === false ? 'No resolved alert when it comes back up.' : 'A resolved alert follows when it comes back up.') : null),
-        h('div', { class: 'actions' }, h('button', { class: 'btn', onclick: () => paintProblems(p.id) }, 'Edit')));
-    }));
-  }
-
-  function problemForm(p) {
-    const draft = { name: p.name, config: { ...p.config } };
-    const form = h('form', { class: 'card form problem-form' },
-      h('h3', null, `Edit ${p.name}`),
-      h('div', { class: 'field' },
-        h('label', { for: 'p-name' }, 'Name'),
-        h('input', { id: 'p-name', value: draft.name, oninput: (e) => { draft.name = e.target.value; } })),
-      p.kind === 'down' ? h('label', { class: 'check' },
-        h('input', { type: 'checkbox', checked: draft.config.recovery !== false, onchange: (e) => { draft.config.recovery = e.target.checked; } }),
-        h('span', null, 'Send a resolved alert when the monitor comes back up')) : null,
-      h('div', { class: 'form-actions' },
-        h('button', { type: 'button', class: 'btn ghost', onclick: () => paintProblems() }, 'Cancel'),
-        h('button', { type: 'submit', class: 'btn primary' }, 'Save')));
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      try {
-        Object.assign(p, await api(`problems/${p.id}`, { method: 'PUT', body: draft }));
-        toast('Saved', 'success');
-        paintProblems();
-        paintRules();
-      } catch (err) {
-        toast(err.message, 'error');
-      }
-    });
-    return form;
-  }
+  const problemsCtl = renderProblemsSection(problemsBox, { state, problems, onChanged: () => reload() });
 
   fill(main, h('div', { class: 'stack' },
     h('div', { class: 'page-head' },
@@ -403,11 +364,12 @@ export async function renderNotifications(main, { state, editing: addingChannel 
     formBox,
     channelsBox,
     h('div', { class: 'page-head section-head' },
-      h('h2', null, 'Problems'),
-      h('p', { class: 'muted' }, 'What a rule can alert about.')),
+      h('div', null,
+        h('h2', null, 'Problems'),
+        h('p', { class: 'muted' }, 'What a rule can alert about. Besides a monitor going down, a problem can watch an SNMP value on the monitors with certain tags, such as a UPS running on battery.')),
+      h('button', { class: 'btn primary', onclick: () => problemsCtl.add() }, '+ Add problem')),
     problemsBox));
   paintRules();
   paintChannels();
-  paintProblems();
   if (addingChannel) showForm(null);
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.0
+
+- **SNMP value problems.** Besides a monitor going down, a problem can now watch a value on the SNMP monitors with certain tags: **+ Add problem** on the Notifications page. Start from a ready-made one (*UPS on battery*, *UPS battery low*, *UPS on bypass*, *CPU busy*, *Disk almost full*, *Memory almost full*) or a blank one. A problem has several **readings**, since makes report the same thing in different places, and each monitor uses the first one it answers. The UPS ones read the standard UPS-MIB and APC's, Eaton's and CyberPower's own values, so one problem covers a mixed fleet tagged *UPS*. Values are listed by name from the MIB library.
+- A problem can **open after N checks in a row**, **list everything downstream in its alert** (without marking any of it down), and send a resolved alert when it clears. Its card shows what it watches, what's open, and which tagged monitors **can't be read**.
+- **Severity**: problems are *Info*, *Warning* or *Severe* (Monitor down is always severe). A warning makes the monitor's card pulse yellow in the Falls and marks it in the list; severe pulses red. Rules can alert on *warning or worse* or *any severe problem*, and ntfy, Discord, Pushover and Gotify send severe problems at the same priority as a monitor going down.
+- **Unresolved** on the Alerts page: every monitor that's down and every open problem, with its value and how long it's been open, filterable by severity and by tag.
+- The webhook payload has a `problem` field, and alert kinds `problem` and `resolved`.
+
 ## 0.11.0
 
 - **Notification rules.** Alerts are now set up on the **Notifications** page instead of with checkboxes on every monitor. Each rule reads *Alert* [channels] *when* [problems] *for* [tags], and you pick the tags with the same pills (any/all) and **Advanced** expressions as the tag filter. Rules are listed as a table, one row each, with edit and delete icons at the end of every row; edits only apply when you press **Save**. A rule can also fire when the fault is upstream of its tagged monitors, so a *Critical* rule hears about the switch that took a critical server down.

@@ -1,7 +1,8 @@
 import { Graph } from './graph.js';
 import { DOWN, UP, PENDING, BLOCKED, STATUS_NAMES } from './status.js';
 import { log } from './config.js';
-import { matchRules } from '../public/js/rules.js';
+import { matchRules, SEVERITIES } from '../public/js/rules.js';
+import { evaluate, inScope, probeOids } from './problems.js';
 
 const BEAT_BUFFER = 60;
 // When a child fails we re-probe its parents, unless they were checked
@@ -59,6 +60,9 @@ export class Engine {
     this.pending = new Set();
     this.uptimeCache = null;
     this.pruneTimer = null;
+    // Value problems: `${problemId}:${monitorId}` -> { problemId, monitorId,
+    // state: 'open' | 'ok' | 'unknown', since, value, hits }. Loaded once.
+    this.pstate = null;
   }
 
   // ---- lifecycle ----------------------------------------------------------
@@ -123,6 +127,8 @@ export class Engine {
       });
     }
     this.monitors = fresh;
+    if (!this.pstate) this.pstate = new Map(this.store.listProblemState().map((x) => [`${x.problemId}:${x.monitorId}`, { ...x, hits: 0 }]));
+    for (const [key, x] of this.pstate) if (!fresh.has(x.monitorId)) this.pstate.delete(key);
     this.graph = new Graph(list.map((m) => m.id), this.store.listEdges());
     for (const m of list) if (!m.active || m.type === 'group') this.cancel(this.runtime.get(m.id).timer);
     this.version++;
@@ -246,7 +252,8 @@ export class Engine {
         this.#setBlocked(id);
         return;
       }
-      const result = await this.#runChecker(m);
+      const watching = this.#watching(m);
+      const result = await this.#runChecker(m, probeOids(watching));
       if (!this.monitors.has(id) || !this.monitors.get(id).active) return;
       // What the check collected (SNMP), kept as the monitor's latest snapshot;
       // a failed check leaves the last one in place.
@@ -256,8 +263,10 @@ export class Engine {
         this.#setBlocked(id);
         return;
       }
-      if (result.ok) this.#onUp(m, result);
-      else await this.#onFailure(m, result);
+      if (result.ok) {
+        this.#onUp(m, result);
+        this.#evaluateProblems(m, result, watching);
+      } else await this.#onFailure(m, result);
     } catch (err) {
       log.error(`Check of "${m.name}" crashed:`, err);
     } finally {
@@ -265,7 +274,7 @@ export class Engine {
     }
   }
 
-  async #runChecker(m) {
+  async #runChecker(m, probe = []) {
     if (m.type === 'push') {
       const push = this.runtime.get(m.id).push;
       if (push && this.now() - push.time <= m.interval * 1000) return push.result;
@@ -279,7 +288,7 @@ export class Engine {
     });
     try {
       const previous = this.store.getMonitorData?.(m.id)?.data ?? null;
-      return await Promise.race([Promise.resolve().then(() => fn(m, { previous })), guard]);
+      return await Promise.race([Promise.resolve().then(() => fn(m, { previous, probe })), guard]);
     } catch (err) {
       return { ok: false, msg: err.message || String(err) };
     } finally {
@@ -418,6 +427,136 @@ export class Engine {
       .map(({ id: d, depth }) => ({ id: d, name: this.monitors.get(d).name, depth }));
   }
 
+  // ---- value problems -----------------------------------------------------
+
+  // The value problems that watch `m`: by its tags, and only SNMP monitors
+  // can be read.
+  #watching(m) {
+    if (m.type !== 'snmp') return [];
+    const problems = this.store.listProblems().filter((p) => p.kind === 'value');
+    if (!problems.length) return [];
+    const tags = this.store.listTags();
+    const mine = this.store.monitorTagMap().get(m.id) ?? [];
+    return problems.filter((p) => inScope(p, mine, tags));
+  }
+
+  #saveState(x) {
+    this.store.setProblemState(x);
+    this.version++;
+  }
+
+  // After a successful check: open, update or clear each problem watching `m`.
+  // A problem opens after `checks` hits in a row; a value the device stops
+  // answering leaves an open problem open (we can't tell it cleared).
+  #evaluateProblems(m, result, watching) {
+    const now = this.now();
+    const ids = new Set(watching.map((p) => p.id));
+    for (const [key, x] of this.pstate) {
+      if (x.monitorId !== m.id || ids.has(x.problemId)) continue;
+      this.pstate.delete(key); // not watched any more: forget it quietly
+      this.store.deleteProblemState(x.problemId, m.id);
+      this.version++;
+    }
+    for (const p of watching) {
+      // the probe itself failed: no news either way
+      if (!result.probe && p.config.readings.some((r) => r.source === 'oid')) continue;
+      const r = evaluate(p, result);
+      const key = `${p.id}:${m.id}`;
+      let x = this.pstate.get(key);
+      if (!x) {
+        x = { problemId: p.id, monitorId: m.id, state: null, since: now, value: '', hits: 0 };
+        this.pstate.set(key, x);
+      }
+      const was = x.state;
+      if (r.state === 'open') {
+        x.hits++;
+        if (was === 'open') {
+          if (x.value !== r.value) this.#saveState(Object.assign(x, { value: r.value }));
+        } else if (x.hits >= (p.config.checks ?? 1)) {
+          this.#saveState(Object.assign(x, { state: 'open', since: now, value: r.value }));
+          this.#track(this.#sendProblem(m, p, x, true));
+        } else if (was !== 'ok' || x.value !== r.value) {
+          // not yet: still ok as far as anyone is told
+          this.#saveState(Object.assign(x, { state: 'ok', since: was === 'ok' ? x.since : now, value: r.value }));
+        }
+        continue;
+      }
+      x.hits = 0;
+      if (was === 'open' && r.state === 'unknown') continue;
+      if (was === 'open') {
+        const openFor = now - x.since;
+        this.#saveState(Object.assign(x, { state: 'ok', since: now, value: r.value }));
+        this.#track(this.#sendProblem(m, p, x, false, openFor));
+      } else if (was !== r.state || x.value !== r.value) {
+        this.#saveState(Object.assign(x, { state: r.state, since: was === r.state ? x.since : now, value: r.value }));
+      }
+    }
+  }
+
+  // Forget a deleted problem's state (the store cascades on its own).
+  forgetProblem(problemId) {
+    for (const [key, x] of this.pstate ?? []) if (x.problemId === problemId) this.pstate.delete(key);
+    this.version++;
+  }
+
+  // State per watched monitor, for the Problems page: [{ problemId, monitorId, state, since, value }].
+  problemState() {
+    return [...(this.pstate?.values() ?? [])].map(({ hits, ...x }) => x);
+  }
+
+  // Everything unresolved: monitors that are down (the root causes; blocked
+  // ones are listed in those alerts) and open value problems. `stale` means
+  // the monitor isn't up, so the value is the last one read.
+  openProblems() {
+    const problems = this.store.listProblems();
+    const byId = new Map(problems.map((p) => [p.id, p]));
+    const down = problems.find((p) => p.kind === 'down');
+    const tags = this.store.listTags();
+    const tagMap = this.store.monitorTagMap();
+    const out = [];
+    for (const m of this.monitors.values()) {
+      const rt = this.runtime.get(m.id);
+      if (!m.active || m.type === 'group' || rt.status !== DOWN || !down) continue;
+      out.push({ problemId: down.id, monitorId: m.id, severity: 'severe', since: rt.downSince ?? rt.lastCheck, value: rt.msg });
+    }
+    for (const x of this.pstate?.values() ?? []) {
+      const p = byId.get(x.problemId);
+      const m = this.monitors.get(x.monitorId);
+      if (x.state !== 'open' || !p || !m?.active || !inScope(p, tagMap.get(m.id) ?? [], tags)) continue;
+      out.push({ problemId: p.id, monitorId: m.id, severity: p.severity, since: x.since, value: x.value, stale: this.runtime.get(m.id).status !== UP });
+    }
+    return out;
+  }
+
+  // Everything below `id` (active), for a problem that lists its downstream.
+  #downstreamOf(id) {
+    return this.graph
+      .subtree(id, (d) => this.monitors.get(d)?.active, (d) => this.monitors.get(d)?.name ?? '')
+      .map(({ id: d, depth }) => ({ id: d, name: this.monitors.get(d).name, depth }));
+  }
+
+  composeProblem(m, p, x, opened, openFor = 0, affected = []) {
+    const title = opened ? `${SEVERITIES[p.severity].label}: ${m.name} – ${p.name}` : `Resolved: ${m.name} – ${p.name}`;
+    const lines = opened
+      ? [`${p.name} on ${m.name}.`, '', `Value: ${x.value || 'unknown'}`]
+      : [`${p.name} cleared on ${m.name} after ${formatDuration(openFor)}.`, '', `Value: ${x.value || 'unknown'}`];
+    const target = describeTarget(m);
+    if (target) lines.push(`Target: ${target}`);
+    lines.push(`Time: ${this.#formatTime(this.now())}`);
+    if (affected.length) {
+      lines.push('', `${opened ? 'Downstream monitors' : 'Downstream monitors it covered'} (${affected.length}):`);
+      for (const a of affected) lines.push(`${'-'.repeat(a.depth)} ${a.name}`);
+    }
+    return { title, message: lines.join('\n') };
+  }
+
+  async #sendProblem(m, p, x, opened, openFor) {
+    const affected = p.config.downstream ? this.#downstreamOf(m.id) : [];
+    const { title, message } = this.composeProblem(m, p, x, opened, openFor, affected);
+    (opened && p.severity !== 'info' ? log.warn : log.info)(title);
+    await this.#dispatch(m, opened ? 'problem' : 'resolved', title, message, affected, p);
+  }
+
   // ---- push monitors ------------------------------------------------------
 
   async receivePush(token, { status, msg, ping } = {}) {
@@ -436,16 +575,16 @@ export class Engine {
 
   // ---- alerts -------------------------------------------------------------
 
-  // The channels the notification rules pick for this alert. Every kind of
-  // alert so far belongs to the built-in "down" problem: the alert and its
-  // reminders, and the resolved alert unless that problem has them off.
-  #channelsFor(m, kind, affected) {
-    const problem = this.store.listProblems().find((p) => p.kind === 'down');
-    if (!problem || (kind === 'up' && problem.config.recovery === false)) return [];
+  // The channels the notification rules pick for this alert. Down, its
+  // reminders and up belong to the built-in "down" problem; a resolved alert
+  // goes out unless its problem has them off.
+  #channelsFor(m, kind, affected, problem) {
+    problem ??= this.store.listProblems().find((p) => p.kind === 'down');
+    if (!problem || ((kind === 'up' || kind === 'resolved') && problem.config.recovery === false)) return [];
     const tagMap = this.store.monitorTagMap();
     const { channelIds } = matchRules(
       { rules: this.store.listRules(), tags: this.store.listTags(), tagsOf: (id) => tagMap.get(id) ?? [] },
-      { problemId: problem.id, monitorId: m.id, affectedIds: affected.map((a) => a.id) },
+      { problemId: problem.id, severity: problem.severity, monitorId: m.id, affectedIds: affected.map((a) => a.id) },
     );
     return this.store.listNotifications().filter((n) => n.active && channelIds.has(n.id));
   }
@@ -494,9 +633,9 @@ export class Engine {
     await this.#dispatch(m, 'up', title, message, resuming);
   }
 
-  async #dispatch(m, kind, title, message, affected) {
+  async #dispatch(m, kind, title, message, affected, problem = null) {
     const time = this.now();
-    const channels = this.#channelsFor(m, kind, affected);
+    const channels = this.#channelsFor(m, kind, affected, problem);
     const alert = {
       kind,
       title,
@@ -505,8 +644,12 @@ export class Engine {
       monitor: { id: m.id, name: m.name, type: m.type, target: describeTarget(m) },
       affected: affected.map(({ id, name, depth }) => ({ id, name, depth })),
     };
+    if (problem) alert.problem = { id: problem.id, name: problem.name, severity: problem.severity };
     const delivered = channels.length ? await this.notify(channels, alert) : [];
-    this.store.logAlert({ time, monitorId: m.id, kind, title, message, affected: alert.affected, delivered });
+    this.store.logAlert({
+      time, monitorId: m.id, kind, title, message, affected: alert.affected, delivered,
+      problemId: problem?.id ?? null, severity: problem?.severity ?? (kind === 'down' ? 'severe' : null),
+    });
     this.version++;
   }
 
@@ -564,7 +707,7 @@ export class Engine {
         avgPing24: u?.avgPing ?? null,
       };
     });
-    return { version: this.version, monitors };
+    return { version: this.version, monitors, open: this.openProblems() };
   }
 
   #prune() {

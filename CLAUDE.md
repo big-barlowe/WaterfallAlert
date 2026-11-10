@@ -15,6 +15,7 @@ waterfall_alert/             the add-on (Supervisor build context)
     src/server.js            node:http server, static files, ingress access control
     src/api.js               all REST routes + edge/cycle checks
     src/validate.js          HttpError, normalizeMonitor/normalizeTag (shared by api.js and transfer.js)
+    src/problems.js          value problems: scope, readings (probeOids, readValue, evaluate), normalizeValueProblem
     src/transfer.js          CSV export/import of monitors (CSV_COLUMNS is the single column definition)
     src/csv.js               RFC 4180 parse/write
     src/snmp.js              SNMP v1/v2c client (BER, GET, GETBULK/GETNEXT walks over UDP); no dependency
@@ -32,8 +33,9 @@ waterfall_alert/             the add-on (Supervisor build context)
       js/flow.js             SVG "falls" diagram, focus/lineage view, FLIP animation
       js/icons.js            built-in glyphs, iconEl() (HTML) / iconSvg() (inside the diagram)
       js/tags.js             tag pill, colour picker, "new tag" dialog, tagIconView(), matchToggle(), tagExprEditor() (shared by the filter and rules)
-      js/notifications.js    Notifications page: rule sentences with pickers, channels, problems
-      js/rules.js            notification rule matching (matchRules, ruleTagTest); imports only filter.js, so the engine imports it too
+      js/notifications.js    Notifications page: rule table with pickers, channels; mounts the problems section
+      js/problems.js         Problems section (cards, value problem form, PRESETS), Unresolved table, monitorSeverity(), sevBadge()
+      js/rules.js            notification rule matching (matchRules, ruleTagTest), SEVERITIES; imports only filter.js, so the engine imports it too
       js/snmp.js             SNMP snapshot cache, Falls summary, monitor-page sections (customize mode), All data browser, MIB library card
       js/snmp-names.js       vendor/group names by OID prefix, and a fallback name table (the server's MIBs come first)
       js/filter.js           tag filter expressions (parseTagExpr); no imports, so test/filter.test.js loads it under Node
@@ -50,6 +52,7 @@ waterfall_alert/             the add-on (Supervisor build context)
     test/move.test.js        bulk move route: ride-along subtrees, from-parent semantics, rollback
     test/tags.test.js        tag routes through createApi(), with a real Store and Engine
     test/rules.test.js       notification rules: routing in the engine, tag matching, routes, tag renames, the v7 migration
+    test/problems.test.js    value problems: readings, open/resolve alerts by severity, checks in a row, restarts, routes, SNMP probe
     test/transfer.test.js    CSV round trip into a fresh store, import modes, rollback on errors
 docs/csv.md                  user guide for the CSV format (linked from the Settings page)
 docs/docker.md               running without Home Assistant (Compose, backups, reverse proxy, networking)
@@ -113,11 +116,13 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 
 ## Notification rules
 
-- `notification_rules(channel_ids, problem_ids, tag_ids, tag_match, tag_expr, downstream)` (JSON id lists) and `problems(kind, name, config)`. A rule reads "Alert <channels> when <problems> for <tags>": empty `problem_ids` = any problem, no tags = all monitors, `tag_expr` (filter.js syntax) replaces the pills when set. `downstream`: also fires when the monitor at fault is untagged but one of the monitors its alert lists (affected / resuming) matches.
+- `notification_rules(channel_ids, problem_ids, tag_ids, tag_match, tag_expr, downstream, min_severity)` (JSON id lists) and `problems(kind, name, severity, config)`. A rule reads "Alert <channels> when <problems> for <tags>": empty `problem_ids` = any problem (of at least `min_severity` if set), no tags = all monitors, `tag_expr` (filter.js syntax) replaces the pills when set. `downstream`: also fires when the monitor at fault is untagged but one of the monitors its alert lists (affected / resuming) matches.
 - `matchRules()` in `public/js/rules.js` is the only matching code; `#channelsFor()` in engine.js and the monitor form both call it. The engine imports it (and api.js imports filter.js) from `../public/js/`, which is why those two files must stay import-free apart from each other.
-- There is one problem so far, kind `down` (built in, id 1): it covers the down alert, reminders and the `up` alert; `config.recovery: false` stops resolved alerts. A new kind needs its own entry in `PROBLEM_KINDS` (notifications.js) and a place in the engine that dispatches it.
+- Problem kinds: `down` (built in, id 1, always `severe`) covers the down alert, reminders and the `up` alert; `config.recovery: false` stops resolved alerts. A new kind needs an entry in `PROBLEM_KINDS` (problems.js) and a place in the engine that dispatches it.
+- Severities are `SEVERITIES` in rules.js (`info` < `warning` < `severe`). `/api/state` carries `problems` (id, kind, name, severity) and `open` (`engine.openProblems()`: DOWN monitors as the down problem, plus open value problems, `stale` when the monitor isn't up). app.js sets `m.sev` (`monitorSeverity()`: highest open value problem, only while up) and `m.issues`; flow.js adds `sev-warning`/`sev-severe` to the node in `#paint`, and the list shows `sevMark()`. `notifier.js` `level(a)` maps kind + severity to loudness.
 - Safety rules: a rule never silently widens. Deleted tag ids stay in `tag_ids` (only live ones count; none live = matches nothing and the page shows it in red), a broken expression matches nothing, and renaming a tag rewrites expressions (`renameInExpr()` in the tag PUT route). Unknown channel and problem ids are dropped on save.
 - Rules only route alerts, so changing them needs no `engine.reload()`. They and channels are not in the CSV; an old file's `notifications` column is ignored with a warning.
+- **Value problems** (kind `value`, `src/problems.js`): `config = { tagIds, tagMatch, tagExpr, readings, checks, recovery, downstream }`, scope tested with `ruleTagTest()` like a rule (none = every SNMP monitor). A reading is `{ source: 'oid'|'cpu'|'memory'|'disk', oid?, op: 'in'|'not-in'|'<'|'<='|'>'|'>=', values?|value, label?, names? }`; a monitor uses the **first reading it answers**, none answered = `unknown` ("can't be read"). The engine's `#watching(m)` picks the problems for an SNMP monitor, `probeOids()` goes to the checker as `fn(m, { previous, probe })`, which GETs them right after the system group and returns `result.probe` (`undefined` if that GET failed: then the engine skips OID problems rather than calling them unknown). `#evaluateProblems()` runs after a successful check: `checks` hits in a row open it (alert kind `problem`), a non-hit closes it (kind `resolved`), `unknown` leaves an open one open, a monitor no longer in scope is forgotten silently. State is `engine.pstate` (memory) mirrored in `problem_state(problem_id, monitor_id, state, since, value)`, so restarts don't re-alert. `downstream: true` lists every active descendant in the alert without blocking anything. Routes: `GET/POST api/problems` (with `coverage`), `PUT/DELETE api/problems/:id` (delete drops the id from rules and deletes rules left with no problem, so none widens to "any"); create/update `engine.reload()` the watched monitors. `GET api/mibs/object?oid=` names an OID and its enums for the form. Tag renames rewrite problem expressions too.
 - Migration v7 is a function (a `MIGRATIONS` entry may be one): it turned the old `monitor_notifications` into rules (a channel on every monitor → an all-monitors rule; otherwise an `Alerts: <channels>` tag with a non-downstream rule) and dropped that table and `notifications.is_default`.
 
 ## Tags

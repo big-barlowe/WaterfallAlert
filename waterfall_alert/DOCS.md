@@ -105,7 +105,7 @@ The **Notifications** page has three parts: rules, channels and problems.
 **Notification rules** decide who hears about what. They're listed as a table, one rule per row, which reads like a sentence: *Alert* [channels] *when* [problems] *for* [tags]. A cell too long for its column fades out at the edge; hover it to see everything. **+ Add rule** starts a new one, and the pencil at the end of a row opens that rule (the bin deletes it): click a cell to change it, then **Save** (or **Add**, for a new rule). Nothing changes until you save, and **×** drops the edits.
 
 - **Channels**: one or more of your channels.
-- **Problems**: *any problem*, or the ones you pick. For now there is one, *Monitor down* (see below).
+- **Problems**: *any problem*, *warning or worse*, *any severe problem*, or the problems you pick (see below).
 - **Tags**: *all monitors*, or the monitors with any (or all) of the tag pills you pick, just like the tag filter. **Advanced** takes an expression such as `Camera & !Cabin`, and renaming a tag updates the rules that use it.
 - **Upstream** (the checkbox column): a rule for some tags normally fires when a tagged monitor is the one at fault. With this ticked it also fires when an untagged monitor takes tagged ones down with it (say, the switch in front of your *Critical* NAS), and sends that alert, which lists them. It's on for new rules.
 
@@ -116,13 +116,29 @@ An alert goes to every channel of every rule that matches it, once per channel. 
 - **Home Assistant**: any `notify.*` service (e.g. `notify.mobile_app_pixel`), or `persistent_notification.create`. This works with no setup when running as an add-on.
 - **ntfy, Discord, Slack, Telegram, Pushover, Gotify, Webhook, Email (SMTP)**: fill in the fields and use **Send test**.
 
-The webhook channel POSTs JSON: `{ kind, title, message, time, monitor, affected: [{ id, name, depth }] }`.
+The webhook channel POSTs JSON: `{ kind, title, message, time, monitor, problem, affected: [{ id, name, depth }] }`. `kind` is `down`, `up`, `problem` (a problem opened) or `resolved` (it cleared); `problem` is `{ id, name, severity }` for the last two. The other channels send severe problems as loudly as a monitor going down, and warnings a step below.
 
-**Problems** are what a rule can alert about. There is one so far, built in:
+**Problems** are what a rule can alert about. Each has a **severity**:
 
-- **Monitor down**: a monitor fails its check (after its retries) while everything it depends on is up. One alert names it and lists every monitor cut off beneath it, reminders follow if the monitor has a reminder interval, and a resolved alert is sent when it comes back up. You can rename it, and turn the resolved alerts off.
+- **Info**: listed under *Unresolved* on the Alerts page, nothing else changes.
+- **Warning**: the monitor's card pulses yellow in the Falls, with a yellow mark in the list.
+- **Severe**: the card pulses red, with a red mark in the list.
 
-The **Alerts** page lists every alert that was sent and which channels delivered it.
+The pulse only shows while the monitor is up; a down monitor already shows red.
+
+**Monitor down** is built in and always severe: a monitor fails its check (after its retries) while everything it depends on is up. One alert names it and lists every monitor cut off beneath it, reminders follow if the monitor has a reminder interval, and a resolved alert is sent when it comes back up. You can rename it, and turn the resolved alerts off.
+
+**+ Add problem** adds an **SNMP value** problem: it watches a value on the SNMP monitors with certain tags, and is open on a monitor while a test on that value holds. Start from a ready-made one (*UPS on battery*, *UPS battery low*, *UPS on bypass*, *CPU busy*, *Disk almost full*, *Memory almost full*) or a blank one, and change anything:
+
+- **For monitors tagged**: pills (any/all) or an **Advanced** expression, like a rule. No tags means every SNMP monitor. The ready-made UPS problems pick a tag called *UPS* if you have one.
+- **Readings**: where to find the value. Different makes report the same thing in different places, so a problem can have several readings, and each monitor uses the **first one it answers**. *UPS on battery*, for instance, reads the standard UPS-MIB first (most UPS network cards, including Eaton, Tripp Lite and Vertiv), then APC's, Eaton's and CyberPower's own values. A reading is an OID, or CPU load, memory use or the fullest disk from what the SNMP check already collects, with a test: *is one of* / *is none of* some values, or *at least*, *above*, *at most*, *below* a number. When the MIB library knows the OID, its values are listed by name to tick.
+- **Open after N checks in a row**: more than 1 rides out short blips, such as a UPS self-test.
+- **Include downstream monitors in the alert**: nothing below it is marked down (they keep being checked), but its alert lists them, so you know what's at risk. Handy for a UPS on battery.
+- **Send a resolved alert when it clears.**
+
+Each problem's card shows which monitors it watches and how many are open. A tagged monitor that answers none of the readings is listed as **can't be read**. Open its *All data* page to find the value it uses, and add that as a reading. A tagged monitor that isn't SNMP can't be read at all. If a device stops answering a value while its problem is open, the problem stays open until a reading says otherwise. Deleting a problem also deletes the rules that only alert about it.
+
+The **Alerts** page starts with **Unresolved**: every monitor that is down and every open problem, most severe first. Filter it by severity and by tag (pills or an expression). A problem on a monitor that isn't up shows its last known value. Below that is every alert that was sent, and which channels delivered it.
 
 **Upgrading from 0.10 or earlier**, where each monitor had channel checkboxes, turns those choices into rules so the same alerts keep going to the same places. A channel every monitor used gets a rule for all monitors. A channel only some monitors used gets a tag on those monitors, named like *Alerts: Email*, and a rule for that tag. Tidy them up as you like.
 

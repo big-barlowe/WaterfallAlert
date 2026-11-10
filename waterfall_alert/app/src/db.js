@@ -189,6 +189,23 @@ export const MIGRATIONS = [
     }
     db.exec('DROP TABLE monitor_notifications; ALTER TABLE notifications DROP COLUMN is_default;');
   },
+  // v8: problems get a severity, and value problems (kind 'value') keep an
+  // open/ok/unknown state per monitor. Rules can ask for "this severe or worse".
+  `
+  ALTER TABLE problems ADD COLUMN severity TEXT NOT NULL DEFAULT 'warning';
+  UPDATE problems SET severity = 'severe' WHERE kind = 'down';
+  CREATE TABLE problem_state (
+    problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+    monitor_id INTEGER NOT NULL REFERENCES monitors(id) ON DELETE CASCADE,
+    state      TEXT    NOT NULL,
+    since      INTEGER NOT NULL,
+    value      TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (problem_id, monitor_id)
+  );
+  ALTER TABLE notification_rules ADD COLUMN min_severity TEXT NOT NULL DEFAULT '';
+  ALTER TABLE alerts ADD COLUMN problem_id INTEGER;
+  ALTER TABLE alerts ADD COLUMN severity TEXT;
+  `,
 ];
 
 const TAG_COLS = 'id, name, color, icon, icon_updated_at AS iconV';
@@ -246,6 +263,7 @@ function rowToRule(r) {
     id: r.id,
     channelIds: JSON.parse(r.channel_ids),
     problemIds: JSON.parse(r.problem_ids),
+    minSeverity: r.min_severity ?? '',
     tagIds: JSON.parse(r.tag_ids),
     tagMatch: r.tag_match,
     tagExpr: r.tag_expr,
@@ -253,7 +271,7 @@ function rowToRule(r) {
   };
 }
 
-const rowToProblem = (r) => ({ id: r.id, kind: r.kind, name: r.name, config: JSON.parse(r.config) });
+const rowToProblem = (r) => ({ id: r.id, kind: r.kind, name: r.name, severity: r.kind === 'down' ? 'severe' : r.severity, config: JSON.parse(r.config) });
 
 export class Store {
   constructor(file) {
@@ -613,18 +631,18 @@ export class Store {
 
   #ruleValues(r) {
     return [JSON.stringify(r.channelIds ?? []), JSON.stringify(r.problemIds ?? []), JSON.stringify(r.tagIds ?? []),
-      r.tagMatch === 'all' ? 'all' : 'any', r.tagExpr ?? '', r.downstream === false ? 0 : 1];
+      r.tagMatch === 'all' ? 'all' : 'any', r.tagExpr ?? '', r.downstream === false ? 0 : 1, r.minSeverity ?? ''];
   }
 
   createRule(r) {
     return Number(this.q(
-      'INSERT INTO notification_rules (channel_ids, problem_ids, tag_ids, tag_match, tag_expr, downstream) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO notification_rules (channel_ids, problem_ids, tag_ids, tag_match, tag_expr, downstream, min_severity) VALUES (?, ?, ?, ?, ?, ?, ?)'
     ).run(...this.#ruleValues(r)).lastInsertRowid);
   }
 
   updateRule(id, r) {
     this.q(
-      'UPDATE notification_rules SET channel_ids = ?, problem_ids = ?, tag_ids = ?, tag_match = ?, tag_expr = ?, downstream = ? WHERE id = ?'
+      'UPDATE notification_rules SET channel_ids = ?, problem_ids = ?, tag_ids = ?, tag_match = ?, tag_expr = ?, downstream = ?, min_severity = ? WHERE id = ?'
     ).run(...this.#ruleValues(r), id);
   }
 
@@ -641,16 +659,41 @@ export class Store {
     return r ? rowToProblem(r) : null;
   }
 
+  createProblem(p) {
+    return Number(this.q('INSERT INTO problems (kind, name, severity, config) VALUES (?, ?, ?, ?)')
+      .run(p.kind, p.name, p.severity ?? 'warning', JSON.stringify(p.config ?? {})).lastInsertRowid);
+  }
+
   updateProblem(id, p) {
-    this.q('UPDATE problems SET name = ?, config = ? WHERE id = ?').run(p.name, JSON.stringify(p.config ?? {}), id);
+    this.q('UPDATE problems SET name = ?, severity = ?, config = ? WHERE id = ?').run(p.name, p.severity ?? 'warning', JSON.stringify(p.config ?? {}), id);
+  }
+
+  deleteProblem(id) {
+    return this.q("DELETE FROM problems WHERE id = ? AND kind != 'down'").run(id).changes > 0;
+  }
+
+  // Value problems' state per monitor: [{ problemId, monitorId, state, since, value }].
+  listProblemState() {
+    return this.q('SELECT * FROM problem_state').all()
+      .map((r) => ({ problemId: r.problem_id, monitorId: r.monitor_id, state: r.state, since: r.since, value: r.value }));
+  }
+
+  setProblemState(s) {
+    this.q(`INSERT INTO problem_state (problem_id, monitor_id, state, since, value) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (problem_id, monitor_id) DO UPDATE SET state = excluded.state, since = excluded.since, value = excluded.value`)
+      .run(s.problemId, s.monitorId, s.state, s.since, s.value ?? '');
+  }
+
+  deleteProblemState(problemId, monitorId) {
+    this.q('DELETE FROM problem_state WHERE problem_id = ? AND monitor_id = ?').run(problemId, monitorId);
   }
 
   // ---- alert log ----------------------------------------------------------
 
   logAlert(a) {
     this.q(
-      'INSERT INTO alerts (time, monitor_id, kind, title, message, affected, delivered) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(a.time, a.monitorId, a.kind, a.title, a.message, JSON.stringify(a.affected ?? []), JSON.stringify(a.delivered ?? []));
+      'INSERT INTO alerts (time, monitor_id, kind, title, message, affected, delivered, problem_id, severity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(a.time, a.monitorId, a.kind, a.title, a.message, JSON.stringify(a.affected ?? []), JSON.stringify(a.delivered ?? []), a.problemId ?? null, a.severity ?? null);
   }
 
   listAlerts(limit) {
@@ -663,6 +706,8 @@ export class Store {
       message: r.message,
       affected: JSON.parse(r.affected),
       delivered: JSON.parse(r.delivered),
+      problemId: r.problem_id,
+      severity: r.severity,
     }));
   }
 

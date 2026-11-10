@@ -1028,9 +1028,11 @@ export class FlowView {
       const m = byId.get(id);
       if (!m) continue;
       const sel = this.selected.has(id) ? ' selected' : '';
-      g.setAttribute('class', `node ${m.status} type-${m.type}${role}${sel}${m.context ? ' context' : ''}${off ? ' offscreen' : ''}`);
+      const sev = m.sev && m.sev !== 'info' ? ` sev-${m.sev}` : '';
+      g.setAttribute('class', `node ${m.status} type-${m.type}${role}${sel}${sev}${m.context ? ' context' : ''}${off ? ' offscreen' : ''}`);
       sub.textContent = subline(m);
-      title.textContent = `${m.name} — ${STATUS_LABEL[m.status]}${m.msg ? `\n${m.msg}` : ''}${tags.length ? `\nTags: ${tags.map((t) => t.name).join(', ')}` : ''}`;
+      const issues = (m.issues ?? []).map((i) => `\n⚠ ${i.name}${i.value ? `: ${i.value}` : ''}`).join('');
+      title.textContent = `${m.name} — ${STATUS_LABEL[m.status]}${m.msg ? `\n${m.msg}` : ''}${issues}${tags.length ? `\nTags: ${tags.map((t) => t.name).join(', ')}` : ''}`;
     }
   }
 }

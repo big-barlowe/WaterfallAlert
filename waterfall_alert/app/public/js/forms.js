@@ -413,7 +413,7 @@ export async function renderMonitorForm(root, { state, id, presetParent, navigat
   // Where its alerts go, from the notification rules and the tags picked above.
   const renderAlertRoute = () => {
     const problem = problems.find((p) => p.kind === 'down');
-    const { channelIds } = matchRules({ rules, tags, tagsOf: () => draft.tagIds }, { problemId: problem?.id, monitorId: self });
+    const { channelIds } = matchRules({ rules, tags, tagsOf: () => draft.tagIds }, { problemId: problem?.id, severity: 'severe', monitorId: self });
     const to = channels.filter((c) => channelIds.has(c.id));
     fill(alertsBox,
       to.length

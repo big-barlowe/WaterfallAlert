@@ -64,7 +64,7 @@ function setup() {
 
 test('there is one built-in problem, and an alert goes to the channels whose rules match', async () => {
   const t = setup();
-  assert.deepEqual(t.store.listProblems(), [{ id: t.down, kind: 'down', name: 'Monitor down', config: { recovery: true } }]);
+  assert.deepEqual(t.store.listProblems(), [{ id: t.down, kind: 'down', name: 'Monitor down', severity: 'severe', config: { recovery: true } }]);
   await t.engine.idle();
   t.store.createRule({ channelIds: [t.email] }); // everything
   t.store.createRule({ channelIds: [t.phone], problemIds: [t.down], tagIds: [t.critical] });
@@ -138,7 +138,7 @@ test('renaming a tag rewrites the expressions that name it', async () => {
 test('rule routes keep known channels and problems, and keep deleted tags', async () => {
   const t = setup();
   const r = await t.call('POST', '/api/rules', { channelIds: [t.phone, 999], problemIds: [t.down, 5], tagIds: [t.critical, t.office], tagMatch: 'all' });
-  assert.deepEqual(r, { id: r.id, channelIds: [t.phone], problemIds: [t.down], tagIds: [t.critical, t.office], tagMatch: 'all', tagExpr: '', downstream: true });
+  assert.deepEqual(r, { id: r.id, channelIds: [t.phone], problemIds: [t.down], minSeverity: '', tagIds: [t.critical, t.office], tagMatch: 'all', tagExpr: '', downstream: true });
   // A partial update keeps the rest; switching to pills clears the expression.
   assert.deepEqual((await t.call('PUT', `/api/rules/${r.id}`, { channelIds: [t.email] })).tagIds, [t.critical, t.office]);
   await t.call('PUT', `/api/rules/${r.id}`, { tagExpr: 'Office' });

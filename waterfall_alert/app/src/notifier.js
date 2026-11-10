@@ -2,9 +2,18 @@ import { haRequest } from './checkers/homeassistant.js';
 import { log } from './config.js';
 
 // An alert passed to every provider:
-//   { kind: 'down' | 'up' | 'test', title, message, monitor, affected, time }
+//   { kind: 'down' | 'up' | 'problem' | 'resolved' | 'test', title, message,
+//     monitor, affected, time, problem?: { id, name, severity } }
 // `title` is the one-line subject ("Alert: Host 2 is unreachable"); `message`
 // is the plain-text body including the tree of affected downstream monitors.
+
+// How loud an alert should be: 'urgent' (a monitor down, a severe problem),
+// 'warning', or 'calm' (resolved, info, test).
+export function level(a) {
+  if (a.kind === 'down') return 'urgent';
+  if (a.kind === 'problem') return a.problem?.severity === 'severe' ? 'urgent' : a.problem?.severity === 'warning' ? 'warning' : 'calm';
+  return 'calm';
+}
 
 async function post(url, body, headers = {}) {
   const res = await fetch(url, {
@@ -55,8 +64,8 @@ export const providers = {
         topic: cfg.topic,
         title: a.title,
         message: a.message,
-        priority: a.kind === 'down' ? Number(cfg.priority || 5) : 3,
-        tags: [a.kind === 'down' ? 'rotating_light' : 'droplet'],
+        priority: { urgent: Number(cfg.priority || 5), warning: 4, calm: 3 }[level(a)],
+        tags: [{ urgent: 'rotating_light', warning: 'warning', calm: 'droplet' }[level(a)]],
       }, cfg.token ? { Authorization: `Bearer ${cfg.token}` } : {});
     },
   },
@@ -71,7 +80,7 @@ export const providers = {
         embeds: [{
           title: a.title,
           description: '```\n' + a.message.slice(0, 3900) + '\n```',
-          color: a.kind === 'down' ? 0xef4444 : 0x22d3ee,
+          color: { urgent: 0xef4444, warning: 0xfbbf24, calm: 0x22d3ee }[level(a)],
           timestamp: new Date(a.time).toISOString(),
         }],
       });
@@ -115,7 +124,7 @@ export const providers = {
         user: cfg.userKey,
         title: a.title,
         message: a.message,
-        priority: a.kind === 'down' ? 1 : 0,
+        priority: level(a) === 'urgent' ? 1 : 0,
       });
     },
   },
@@ -131,7 +140,7 @@ export const providers = {
       await post(`${cfg.server.replace(/\/$/, '')}/message`, {
         title: a.title,
         message: a.message,
-        priority: a.kind === 'down' ? 8 : 4,
+        priority: { urgent: 8, warning: 6, calm: 4 }[level(a)],
       }, { 'X-Gotify-Key': cfg.appToken });
     },
   },
@@ -147,6 +156,7 @@ export const providers = {
         message: a.message,
         time: new Date(a.time).toISOString(),
         monitor: a.monitor,
+        problem: a.problem ?? null,
         affected: a.affected,
       });
     },
