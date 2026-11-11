@@ -1,10 +1,19 @@
 <p align="center"><img src="docs/brand/header-animated.svg" alt="Upstream Kuma" width="640"></p>
 
 # Upstream Kuma
+>Inspired by the **wonderful** project Uptime Kuma. 
 
-Hierarchical uptime monitoring for Home Assistant, or on its own with Docker. It's as simple as Uptime Kuma, except it understands that **when the WAN is down, you don't need twenty alerts.**
+Simple hierarchical monitoring and alerts deployable on Home Assistant or on its own with Docker. Flow based monitors that visualize dependency in your network. Intuitive filtering and custom alerts without honorous templating. 
 
-Monitors form a hierarchy, like folders. Checks run top-down: if `Host 2` is unreachable, nothing beneath it gets checked, and you get **one** alert:
+Need something **more** than Uptime Kuma but *less* than Zabbix?
+
+>Disclaimer that ai was used to create this. This wasn't anywhere near a one shot, but I'm not going to pretend it was handcrafted. Some elements are, especially artistically and I hope to implement more as time goes on. 
+### 🌊 Goodbye Alert Storms
+
+Managing 13 sites in a town with tissue-paper power lines, alert storms were **feirce**. Our phones would bing in enourmous waves. We tried implementing a heirachy in Zabbix, but we simply weren't smart enough. 
+
+In Upstream Kuma, monitors form a hierarchy, like folders. Checks run top-down:  
+If `Host 2` is unreachable, nothing beneath it gets checked, and you get **one** alert:
 
 ```
 Alert: Host 2 is unreachable
