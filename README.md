@@ -1,6 +1,6 @@
-<p align="center"><img src="docs/brand/header-animated.svg" alt="BlueHole" width="520"></p>
+<p align="center"><img src="docs/brand/header-animated.svg" alt="Upstream Kuma" width="640"></p>
 
-# BlueHole
+# Upstream Kuma
 
 Hierarchical uptime monitoring for Home Assistant, or on its own with Docker. It's as simple as Uptime Kuma, except it understands that **when the WAN is down, you don't need twenty alerts.**
 
@@ -21,7 +21,7 @@ Other affected monitors (3):
 - Service 2.2
 ```
 
-![The Falls in the rings layout: the blue hole at the centre, streams flowing out to every monitor, one switch down with its devices blocked, and a UPS on battery](docs/screenshot.png)
+![The Falls in the rings layout: the source at the centre, streams flowing out to every monitor, one switch down with its devices blocked, and a UPS on battery](docs/screenshot.png)
 
 ## Features
 
@@ -41,13 +41,13 @@ Other affected monitors (3):
 
 ## Install
 
-BlueHole runs as a Home Assistant add-on, or on its own on any machine with Docker.
+Upstream Kuma runs as a Home Assistant add-on, or on its own on any machine with Docker.
 
 ### As a Home Assistant add-on
 
 1. In Home Assistant go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories**.
 2. Add `https://github.com/big-barlowe/WaterfallAlert`.
-3. Install **BlueHole**, start it, and open **BlueHole** from the sidebar.
+3. Install **Upstream Kuma**, start it, and open **Upstream Kuma** from the sidebar.
 
 See [waterfall_alert/DOCS.md](waterfall_alert/DOCS.md) for configuration and usage details.
 

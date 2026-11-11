@@ -1,6 +1,6 @@
-# Running BlueHole with Docker
+# Running Upstream Kuma with Docker
 
-You don't need Home Assistant to use BlueHole. It is published as a Docker image, `ghcr.io/big-barlowe/waterfall-alert`, and outside Home Assistant it runs as a standalone web app. Everything works the same, except:
+You don't need Home Assistant to use Upstream Kuma. It is published as a Docker image, `ghcr.io/big-barlowe/waterfall-alert`, and outside Home Assistant it runs as a standalone web app. Everything works the same, except:
 
 - **Home Assistant entity monitors** and the **Home Assistant notification channel** need a connection to a Home Assistant instance. See [Connecting to Home Assistant](#connecting-to-home-assistant-optional). All other monitor types (HTTP(S), TCP, ping, DNS, Minecraft, push, group) and notification channels (ntfy, Discord, Slack, Telegram, Pushover, Gotify, webhook, email) work on their own.
 - **There is no login.** Inside Home Assistant, HA handles sign-in. On its own, anyone who can reach the port can use the UI. Keep it on a trusted network, or put it behind a reverse proxy that adds a login. See [Security](#security).
@@ -155,7 +155,7 @@ If you build it yourself, run `git pull` (for a clone), then `docker compose bui
 
 ## Security
 
-BlueHole has **no user accounts or login** of its own. Anyone who can open the port can view and change everything, including notification settings such as bot tokens and SMTP passwords. So:
+Upstream Kuma has **no user accounts or login** of its own. Anyone who can open the port can view and change everything, including notification settings such as bot tokens and SMTP passwords. So:
 
 - **On a home network:** fine as it is, if you trust the devices on it.
 - **Reachable from the internet:** don't publish port 8099 directly. Put a reverse proxy in front that adds authentication: basic auth, or a single sign-on service such as Authelia, Authentik or Cloudflare Access.
@@ -203,7 +203,7 @@ The checks run **from inside the container**, so they see the network the way th
 
 ## Connecting to Home Assistant (optional)
 
-BlueHole can talk to a Home Assistant instance even when it runs on its own. This enables **HA entity** monitors (for example, alert when `binary_sensor.nas_online` goes off) and the **Home Assistant** notification channel (send alerts through any `notify.*` service, such as the mobile app).
+Upstream Kuma can talk to a Home Assistant instance even when it runs on its own. This enables **HA entity** monitors (for example, alert when `binary_sensor.nas_online` goes off) and the **Home Assistant** notification channel (send alerts through any `notify.*` service, such as the mobile app).
 
 1. In Home Assistant, open your profile → **Security** → **Long-lived access tokens** → **Create token**.
 2. Set the two variables and restart the container:

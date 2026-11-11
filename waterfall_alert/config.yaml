@@ -1,5 +1,5 @@
-name: BlueHole
-version: "0.14.0"
+name: Upstream Kuma
+version: "0.15.0"
 slug: waterfall_alert
 description: Hierarchical uptime monitoring — one alert for the root cause, not twenty.
 url: https://github.com/big-barlowe/WaterfallAlert
@@ -12,7 +12,7 @@ init: false
 ingress: true
 ingress_port: 8099
 panel_icon: mdi:water-circle
-panel_title: BlueHole
+panel_title: Upstream Kuma
 homeassistant_api: true
 ports:
   8099/tcp: null

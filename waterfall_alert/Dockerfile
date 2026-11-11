@@ -22,5 +22,5 @@ ENTRYPOINT ["/sbin/tini", "--"]
 CMD ["node", "--disable-warning=ExperimentalWarning", "src/server.js"]
 
 LABEL io.hass.type="addon" \
-      io.hass.name="BlueHole" \
+      io.hass.name="Upstream Kuma" \
       io.hass.description="Hierarchical uptime monitoring with root-cause alerting"

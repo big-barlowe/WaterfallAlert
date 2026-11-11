@@ -1,6 +1,6 @@
 # Importing and exporting monitors (CSV)
 
-BlueHole can export every monitor to a CSV file and import monitors from one. Use it to:
+Upstream Kuma can export every monitor to a CSV file and import monitors from one. Use it to:
 
 - **Move to a new install.** Export here, import there. The hierarchy, settings, tags and icons all come along.
 - **Edit in bulk.** Export, change the file in a spreadsheet, and import it again with **Update** mode.

@@ -432,7 +432,7 @@ function subline(m) {
 // the diagram, and it fits again whenever the focus or the set of shown
 // monitors changes. `height` is a height the user dragged the map to (null =
 // sized to the diagram).
-// ---- the source: the blue hole everything flows from -------------------------
+// ---- the source: the hole everything flows from -------------------------
 
 // docs/brand/node.svg: rim, water and core, centred on HOLE.c (in its own
 // 205-unit box) and drawn HOLE.scale times that size.
@@ -478,7 +478,7 @@ function warbleFrames(d, { amp, lobes: [k1, k2], dir = 1, frames = 12 }) {
 const STILL = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 let holeFrames = null;
 
-function blueHole(x, y) {
+function sourceHole(x, y) {
   const [cx, cy] = HOLE.c;
   const s = HOLE.scale;
   holeFrames ??= {
@@ -730,7 +730,7 @@ export class FlowView {
       this.nodeEls.set(m.id, { g, inner, pool, title, sub, role, tags: m.tagList ?? [], s: scale });
     }
 
-    const hole = blueHole(srcX, srcY);
+    const hole = sourceHole(srcX, srcY);
 
     this.viewEl = svg('g', { class: 'viewport' }, hole.under, edges, nodes, hole.over);
     const root = svg('svg', {

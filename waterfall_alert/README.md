@@ -1,4 +1,4 @@
-# BlueHole
+# Upstream Kuma
 
 Hierarchical uptime monitoring: monitors are arranged like folders, checked top-down, and a failure sends **one alert for the root cause** that lists everything downstream of it.
 

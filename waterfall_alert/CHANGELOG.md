@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.0
+
+- **BlueHole is now Upstream Kuma.** New name and header (with its streams flowing like the Falls', including the ones running between the letters). The sidebar entry in Home Assistant is now *Upstream Kuma*; the logo and the Falls' source are unchanged.
+- Updating keeps everything: the add-on's id, the Docker image (`ghcr.io/big-barlowe/waterfall-alert`) and the repository address are unchanged, so it updates in place.
+
 ## 0.14.0
 
 - **Waterfall Alert is now BlueHole.** New name, logo (the add-on icon in Home Assistant and the browser tab icon) and header, with the stream in the header flowing like the streams in the Falls. The sidebar entry in Home Assistant is now *BlueHole*.

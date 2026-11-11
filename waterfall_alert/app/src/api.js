@@ -524,9 +524,9 @@ export function createApi({ store, engine, icons }) {
     const n = normalizeNotification({ name: 'Test', ...body });
     const [res] = await deliver([{ id: 0, ...n }], {
       kind: 'test',
-      title: 'Test: BlueHole is flowing',
+      title: 'Test: Upstream Kuma is flowing',
       message: [
-        'This is a test notification from BlueHole.',
+        'This is a test notification from Upstream Kuma.',
         '',
         'A real alert looks like this:',
         'Alert: Host 2 is unreachable',

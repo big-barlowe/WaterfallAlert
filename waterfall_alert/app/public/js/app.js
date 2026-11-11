@@ -217,7 +217,7 @@ function renderSummary() {
     : c.pending ? `${c.pending} pending` : state.monitors.length ? 'All flowing' : 'No monitors yet';
   fill(el, h('span', { class: `dot ${tone}` }), text);
   el.className = `summary ${tone}`;
-  document.title = c.down ? `(${c.down}) BlueHole` : 'BlueHole';
+  document.title = c.down ? `(${c.down}) Upstream Kuma` : 'Upstream Kuma';
 }
 
 // ---- sidebar tree -----------------------------------------------------------
@@ -1328,7 +1328,7 @@ async function renderSettings() {
     mibLibraryCard(),
     h('div', { class: 'card' },
       h('h3', null, 'About'),
-      h('p', null, `BlueHole ${info.version}${info.addon ? ' · running as a Home Assistant add-on' : ' · standalone'}`),
+      h('p', null, `Upstream Kuma ${info.version}${info.addon ? ' · running as a Home Assistant add-on' : ' · standalone'}`),
       h('p', { class: 'muted' }, 'Monitors are checked top-down. When something fails, its parents are re-checked first, so you get one alert for the real cause listing everything downstream of it.'))));
 }
 
