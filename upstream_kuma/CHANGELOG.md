@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.1
+
+- **A filter keeps your trace.** Filtering while you trace a monitor no longer jumps elsewhere when that monitor doesn't match: it stays (faded, with the monitors above it) and shows nothing below it, and the bar says how many monitors downstream match the filter. It drops out once you leave the trace, as it would if you'd filtered the whole view.
+
 ## 0.16.0
 
 - **New add-on id, image and repository.** Everything that still said *waterfall* now says *upstream-kuma*: the repository is `github.com/big-barlowe/upstream-kuma`, the add-on's id is `upstream_kuma`, and the Docker image is `ghcr.io/big-barlowe/upstream-kuma`.

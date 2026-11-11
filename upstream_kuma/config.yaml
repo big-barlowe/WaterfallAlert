@@ -1,5 +1,5 @@
 name: Upstream Kuma
-version: "0.16.0"
+version: "0.16.1"
 slug: upstream_kuma
 description: Hierarchical uptime monitoring — one alert for the root cause, not twenty.
 url: https://github.com/big-barlowe/upstream-kuma

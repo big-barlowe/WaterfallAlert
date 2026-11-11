@@ -146,6 +146,20 @@ function descendantsOf(id) {
   return seen;
 }
 
+function ancestorsOf(id) {
+  const seen = new Set();
+  const queue = [id];
+  while (queue.length) {
+    for (const p of state.byId.get(queue.shift())?.parents ?? []) {
+      if (!seen.has(p)) {
+        seen.add(p);
+        queue.push(p);
+      }
+    }
+  }
+  return seen;
+}
+
 // ---- data -----------------------------------------------------------------
 
 let pollTimer;
@@ -776,9 +790,13 @@ async function renderDashboard(isUpdate = false) {
       h('div', { class: 'stat-label' }, h('span', { class: `dot ${k}` }), STATUS_LABEL[k]))));
 
   const vis = filterView();
-  if (!state.byId.has(ui.focus) || (vis && !vis.show.has(ui.focus))) ui.focus = null;
+  if (!state.byId.has(ui.focus)) ui.focus = null;
   if (!state.byId.has(ui.info)) ui.info = null;
-  const shown = state.monitors.filter((m) => !vis || vis.show.has(m.id))
+  // A filter never moves you off the monitor you're tracing: if it hides that
+  // monitor, it stays (with the chain above it, as context) until you leave
+  // the trace, and simply has nothing matching below it.
+  const keep = vis && ui.focus != null && !vis.show.has(ui.focus) ? new Set([ui.focus, ...ancestorsOf(ui.focus)]) : null;
+  const shown = state.monitors.filter((m) => !vis || vis.show.has(m.id) || keep?.has(m.id))
     .map((m) => ({ ...m, tagList: tagsOf(m), context: Boolean(vis && !vis.match.has(m.id)) }));
   flow.render(shown, ui.focus, { selected: ui.selected, selectMode: ui.selectMode });
   const toggle = $('#select-toggle');
@@ -908,12 +926,14 @@ function renderFocusBar(vis) {
     return;
   }
   const rel = lineage(state.monitors, f.id);
+  const matching = vis ? [...rel.down.keys()].filter((id) => vis.match.has(id)).length : 0;
   fill($('#flow-focus'),
     filterChip,
     h('span', { class: 'focus-chip' },
       h('span', { class: `dot ${f.status}` }),
       h('span', null, f.name),
-      h('span', { class: 'muted' }, ` · ${rel.up.size} upstream · ${rel.down.size} downstream`)),
+      h('span', { class: 'muted' }, ` · ${rel.up.size} upstream · ${rel.down.size} downstream`
+        + (vis && rel.down.size ? ` (${matching} match the filter)` : ''))),
     h('button', { class: 'btn small', onclick: () => setFocus(null, null) }, 'Show all'));
 }
 

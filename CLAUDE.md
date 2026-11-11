@@ -134,7 +134,7 @@ Moving goes through `moveMonitors()` in api.js (`POST api/monitors/move {moves: 
 
 - `tags(id, name, color)` (names unique, case-insensitive) and `monitor_tags`. Tags have nothing to do with checking; they are display and filtering only, so tag changes call `engine.touch()`, not `reload()`.
 - `/api/state` carries `tags` (all of them) and each monitor's `tags` (ids). `POST api/tags/:id/apply {monitorIds, downstream, remove}` is the bulk path; monitor POST/PUT take `tagIds` and `tagsDownstream` (adds only the *newly added* tags to every descendant).
-- Tag filter (`ui.tagFilter` and `ui.tagMatch` = `any`|`all`, or instead an expression in `ui.tagExpr`, all in localStorage; setting one clears the other): `filterView()` in app.js returns `match` (monitors with any/all of the selected tags) and `show` (match + all ancestors). Ancestors that don't match get `.context` and are drawn faded, in both the tree and the Falls.
+- Tag filter (`ui.tagFilter` and `ui.tagMatch` = `any`|`all`, or instead an expression in `ui.tagExpr`, all in localStorage; setting one clears the other): `filterView()` in app.js returns `match` (monitors with any/all of the selected tags) and `show` (match + all ancestors). Ancestors that don't match get `.context` and are drawn faded, in both the tree and the Falls. A filter never drops the Falls focus: if it hides the focused monitor, `renderDashboard` keeps it and its ancestors (as context) until the trace ends.
 - Tag colours are set per element with the `--tag` custom property and mixed with `color-mix()` in CSS. `h()` routes `--*` style keys through `style.setProperty`.
 
 ## CSV import & export (transfer.js)

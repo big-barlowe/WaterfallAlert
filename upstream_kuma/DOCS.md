@@ -65,7 +65,7 @@ It works like a map:
 
 Tags are coloured labels for grouping monitors across the hierarchy, for example by site, room or owner. They show as small pills along the bottom of each monitor in the Falls and as coloured dots in the monitor list.
 
-- **Filter:** click tags at the top of the sidebar to show only monitors with those tags, in both the list and the Falls. Monitors above a match stay visible, faded, so you can still see what the matches depend on.
+- **Filter:** click tags at the top of the sidebar to show only monitors with those tags, in both the list and the Falls. Monitors above a match stay visible, faded, so you can still see what the matches depend on. Filtering while you trace a monitor never moves you off it: if the filter would hide it, it stays (faded, with what's above it) and simply has nothing below it, and it goes once you leave the trace.
 - **Any or all:** with a filter on, the two Venn-diagram buttons next to the tags choose how several tags combine. **Any** (both circles shaded, a union or full outer join) shows monitors with at least one of the tags. **All** (only the overlap shaded, an intersection or inner join) shows only monitors with every one of them. For example, pick *Cabin* and *Camera* with **All** to see just the cameras at the cabin.
 - **Advanced filter:** for anything the pills can't express, click **Advanced** and build a filter, by clicking the operator buttons and tags under the box or by typing:
 
