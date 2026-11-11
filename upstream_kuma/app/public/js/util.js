@@ -135,7 +135,7 @@ export function confirmDialog(title, text, label, onConfirm) {
 
 export function storage(key, fallback) {
   try {
-    const v = localStorage.getItem(`waterfall:${key}`);
+    const v = localStorage.getItem(`upstream-kuma:${key}`);
     return v == null ? fallback : JSON.parse(v);
   } catch {
     return fallback;
@@ -144,7 +144,7 @@ export function storage(key, fallback) {
 
 export function store(key, value) {
   try {
-    localStorage.setItem(`waterfall:${key}`, JSON.stringify(value));
+    localStorage.setItem(`upstream-kuma:${key}`, JSON.stringify(value));
   } catch {
     // private mode / blocked storage: just don't persist
   }

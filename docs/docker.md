@@ -1,6 +1,6 @@
 # Running Upstream Kuma with Docker
 
-You don't need Home Assistant to use Upstream Kuma. It is published as a Docker image, `ghcr.io/big-barlowe/waterfall-alert`, and outside Home Assistant it runs as a standalone web app. Everything works the same, except:
+You don't need Home Assistant to use Upstream Kuma. It is published as a Docker image, `ghcr.io/big-barlowe/upstream-kuma`, and outside Home Assistant it runs as a standalone web app. Everything works the same, except:
 
 - **Home Assistant entity monitors** and the **Home Assistant notification channel** need a connection to a Home Assistant instance. See [Connecting to Home Assistant](#connecting-to-home-assistant-optional). All other monitor types (HTTP(S), TCP, ping, DNS, Minecraft, push, group) and notification channels (ntfy, Discord, Slack, Telegram, Pushover, Gotify, webhook, email) work on their own.
 - **There is no login.** Inside Home Assistant, HA handles sign-in. On its own, anyone who can reach the port can use the UI. Keep it on a trusted network, or put it behind a reverse proxy that adds a login. See [Security](#security).
@@ -29,13 +29,13 @@ Contents:
 
 ## Docker Compose (recommended)
 
-1. Make a folder for it, e.g. `~/waterfall-alert`, and save this as `compose.yaml` inside (the same file is at the top of this repository, [`compose.yaml`](../compose.yaml)):
+1. Make a folder for it, e.g. `~/upstream-kuma`, and save this as `compose.yaml` inside (the same file is at the top of this repository, [`compose.yaml`](../compose.yaml)):
 
    ```yaml
    services:
-     waterfall-alert:
-       image: ghcr.io/big-barlowe/waterfall-alert:latest
-       container_name: waterfall-alert
+     upstream-kuma:
+       image: ghcr.io/big-barlowe/upstream-kuma:latest
+       container_name: upstream-kuma
        restart: unless-stopped
        ports:
          - "8099:8099"
@@ -57,7 +57,7 @@ Contents:
 2. Start it:
 
    ```sh
-   cd ~/waterfall-alert
+   cd ~/upstream-kuma
    docker compose up -d
    ```
 
@@ -77,12 +77,12 @@ Contents:
 
 ```sh
 docker run -d \
-  --name waterfall-alert \
+  --name upstream-kuma \
   --restart unless-stopped \
   -p 8099:8099 \
-  -v /srv/waterfall-alert:/data \
+  -v /srv/upstream-kuma:/data \
   -e TZ=America/Chicago \
-  ghcr.io/big-barlowe/waterfall-alert:latest
+  ghcr.io/big-barlowe/upstream-kuma:latest
 ```
 
 ## Image tags
@@ -94,7 +94,7 @@ docker run -d \
 | `0.5` (etc.) | The newest release in that series. |
 | `edge` | The newest code on the main branch, including unreleased changes. Mostly for testing. |
 
-Images are built for amd64 and arm64 by [GitHub Actions](../.github/workflows/test.yml) after the tests pass. The [changelog](../waterfall_alert/CHANGELOG.md) lists every release.
+Images are built for amd64 and arm64 by [GitHub Actions](../.github/workflows/test.yml) after the tests pass. The [changelog](../upstream_kuma/CHANGELOG.md) lists every release.
 
 ## Building it yourself
 
@@ -102,9 +102,9 @@ To build from source instead, e.g. to run local changes, replace the `image:` li
 
 ```yaml
     # from a clone of this repository (compose.yaml at its top level)
-    build: ./waterfall_alert
+    build: ./upstream_kuma
     # or straight from GitHub, without cloning
-    build: https://github.com/big-barlowe/WaterfallAlert.git#main:waterfall_alert
+    build: https://github.com/big-barlowe/upstream-kuma.git#main:upstream_kuma
 ```
 
 In the GitHub form, `#main` is the branch. To build a particular version, use the full 40-character hash of its commit; the short form doesn't work there.
@@ -124,7 +124,7 @@ Everything about monitors, notifications, tags and retention is set in the web U
 
 ## Your data and backups
 
-Everything (monitors, settings, heartbeat history, the alert log, tags, cached icons) is stored in one SQLite database in the data volume: `./data/waterfall.db` with Compose, or whatever you mounted at `/data`. Next to it you'll also see `waterfall.db-wal` and `waterfall.db-shm`. These belong to the database and must be kept with it.
+Everything (monitors, settings, heartbeat history, the alert log, tags, cached icons) is stored in one SQLite database in the data volume: `./data/upstream-kuma.db` with Compose, or whatever you mounted at `/data`. Next to it you'll also see `upstream-kuma.db-wal` and `upstream-kuma.db-shm`. These belong to the database and must be kept with it.
 
 **To back up**, stop the container so the database is consistent, then copy the folder:
 
@@ -134,7 +134,7 @@ cp -a data "data-backup-$(date +%F)"
 docker compose start
 ```
 
-For a backup without stopping, use SQLite's online backup, e.g. `sqlite3 data/waterfall.db ".backup 'waterfall-backup.db'"` (requires the `sqlite3` tool on the host).
+For a backup without stopping, use SQLite's online backup, e.g. `sqlite3 data/upstream-kuma.db ".backup 'upstream-kuma-backup.db'"` (requires the `sqlite3` tool on the host).
 
 **For just the monitors**, use **Settings → Import & export monitors → Export all monitors (CSV)**. This file is small and readable, and is the easiest way to move to a new install (see the [CSV guide](csv.md)). It doesn't include heartbeat history, notification channels or rules.
 
@@ -164,25 +164,25 @@ Upstream Kuma has **no user accounts or login** of its own. Anyone who can open 
 Example with [Caddy](https://caddyserver.com/), which also handles HTTPS. Create the password hash with `caddy hash-password`:
 
 ```caddyfile
-waterfall.example.com {
+kuma.example.com {
 	# push monitors: no login, the token in the URL is the secret
 	@push path /api/push/*
 	handle @push {
-		reverse_proxy waterfall-alert:8099
+		reverse_proxy upstream-kuma:8099
 	}
 
 	handle {
 		basic_auth {
 			admin <hash from caddy hash-password>
 		}
-		reverse_proxy waterfall-alert:8099
+		reverse_proxy upstream-kuma:8099
 	}
 }
 ```
 
-(`waterfall-alert:8099` works when Caddy runs in the same Compose project or Docker network. Otherwise use `localhost:8099` or the server's IP.)
+(`upstream-kuma:8099` works when Caddy runs in the same Compose project or Docker network. Otherwise use `localhost:8099` or the server's IP.)
 
-**Serving under a sub-path** such as `https://example.com/waterfall/` works too, because the app only uses relative links. Have the proxy strip the prefix, and always link to the address with the trailing slash.
+**Serving under a sub-path** such as `https://example.com/kuma/` works too, because the app only uses relative links. Have the proxy strip the prefix, and always link to the address with the trailing slash.
 
 ## Networking notes
 
@@ -221,7 +221,7 @@ Use the address Home Assistant is reachable at *from the container* (see [Networ
 Both run the same code and read the same database format, so you can switch either way:
 
 - **Easiest:** **Settings → Import & export monitors**. Export on one side and import on the other, then set up notification channels and rules on the new side. Heartbeat history isn't carried over.
-- **Everything, history included:** stop both, then copy `waterfall.db` (and `-wal`/`-shm`, if present) into the other one's data folder. From the add-on, the database is in its backups: make a partial backup of just the add-on, download it, and look for `waterfall.db` in the extracted archive. It's in the add-on's own archive, inside its data folder.
+- **Everything, history included:** stop both, then copy `upstream-kuma.db` (and `-wal`/`-shm`, if present) into the other one's data folder. From the add-on, the database is in its backups: make a partial backup of just the add-on, download it, and look for `upstream-kuma.db` in the extracted archive. It's in the add-on's own archive, inside its data folder.
 
 ## Troubleshooting
 

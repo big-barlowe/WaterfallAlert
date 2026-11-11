@@ -1,8 +1,8 @@
 name: Upstream Kuma
-version: "0.15.0"
-slug: waterfall_alert
+version: "0.16.0"
+slug: upstream_kuma
 description: Hierarchical uptime monitoring — one alert for the root cause, not twenty.
-url: https://github.com/big-barlowe/WaterfallAlert
+url: https://github.com/big-barlowe/upstream-kuma
 arch:
   - aarch64
   - amd64

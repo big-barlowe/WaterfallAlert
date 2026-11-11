@@ -1332,7 +1332,7 @@ async function renderSettings() {
       h('p', { class: 'muted' }, 'Monitors are checked top-down. When something fails, its parents are re-checked first, so you get one alert for the real cause listing everything downstream of it.'))));
 }
 
-const CSV_GUIDE = 'https://github.com/big-barlowe/WaterfallAlert/blob/main/docs/csv.md';
+const CSV_GUIDE = 'https://github.com/big-barlowe/upstream-kuma/blob/main/docs/csv.md';
 
 const IMPORT_MODES = [
   ['add', 'Add every row as a new monitor', 'For a new install, or when the file only has new monitors.'],

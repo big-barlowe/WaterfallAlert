@@ -23,7 +23,13 @@ const MIME = {
 };
 
 fs.mkdirSync(config.dataDir, { recursive: true });
-const store = new Store(path.join(config.dataDir, 'waterfall.db'));
+// Before 0.16.0 the database was waterfall.db; take it over (with its WAL files) once.
+const dbFile = path.join(config.dataDir, 'upstream-kuma.db');
+const oldDb = path.join(config.dataDir, 'waterfall.db');
+if (!fs.existsSync(dbFile) && fs.existsSync(oldDb)) {
+  for (const ext of ['', '-wal', '-shm']) if (fs.existsSync(oldDb + ext)) fs.renameSync(oldDb + ext, dbFile + ext);
+}
+const store = new Store(dbFile);
 const engine = new Engine({ store, checkers, notify: deliver });
 const icons = new IconCache({ store, onChange: () => engine.touch() });
 const api = createApi({ store, engine, icons });

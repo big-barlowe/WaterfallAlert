@@ -192,8 +192,8 @@ The UI is served through Home Assistant ingress (sidebar → **Upstream Kuma**),
 - When a name already exists, you choose: add a second monitor, update the existing one, or skip the row.
 - Choosing a file only checks it and shows what would change. Nothing is saved until you press **Import**, and a file with any error imports nothing.
 
-The Settings page has a column reference. The [full guide](https://github.com/big-barlowe/WaterfallAlert/blob/main/docs/csv.md) covers every column and value, with examples.
+The Settings page has a column reference. The [full guide](https://github.com/big-barlowe/upstream-kuma/blob/main/docs/csv.md) covers every column and value, with examples.
 
 ## Data
 
-Everything is stored in SQLite at `/data/waterfall.db` and is included in Home Assistant backups. Heartbeats older than the retention period (Settings, default 90 days) are pruned every 6 hours.
+Everything is stored in SQLite at `/data/upstream-kuma.db` and is included in Home Assistant backups. Heartbeats older than the retention period (Settings, default 90 days) are pruned every 6 hours.

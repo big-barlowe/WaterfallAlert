@@ -46,27 +46,27 @@ Upstream Kuma runs as a Home Assistant add-on, or on its own on any machine with
 ### As a Home Assistant add-on
 
 1. In Home Assistant go to **Settings → Add-ons → Add-on Store → ⋮ → Repositories**.
-2. Add `https://github.com/big-barlowe/WaterfallAlert`.
+2. Add `https://github.com/big-barlowe/upstream-kuma`.
 3. Install **Upstream Kuma**, start it, and open **Upstream Kuma** from the sidebar.
 
-See [waterfall_alert/DOCS.md](waterfall_alert/DOCS.md) for configuration and usage details.
+See [upstream_kuma/DOCS.md](upstream_kuma/DOCS.md) for configuration and usage details.
 
 ### With Docker (no Home Assistant needed)
 
 Download [`compose.yaml`](compose.yaml) into an empty folder, set your time zone (`TZ`) in it, and start it:
 
 ```sh
-mkdir waterfall-alert && cd waterfall-alert
-curl -O https://raw.githubusercontent.com/big-barlowe/WaterfallAlert/main/compose.yaml
+mkdir upstream-kuma && cd upstream-kuma
+curl -O https://raw.githubusercontent.com/big-barlowe/upstream-kuma/main/compose.yaml
 docker compose up -d
 ```
 
 Or without Compose:
 
 ```sh
-docker run -d --name waterfall-alert --restart unless-stopped \
-  -p 8099:8099 -v /srv/waterfall-alert:/data -e TZ=America/Chicago \
-  ghcr.io/big-barlowe/waterfall-alert:latest
+docker run -d --name upstream-kuma --restart unless-stopped \
+  -p 8099:8099 -v /srv/upstream-kuma:/data -e TZ=America/Chicago \
+  ghcr.io/big-barlowe/upstream-kuma:latest
 ```
 
 Then open `http://<your-server>:8099`. Data is stored in `./data` (or the folder you mounted at `/data`). Every monitor type and notification channel works, except the two that talk to Home Assistant, which need a URL and access token if you want them.
@@ -87,7 +87,7 @@ The **[Docker guide](docs/docker.md)** covers:
 Requires Node.js ≥ 22.13 (for the built-in `node:sqlite`).
 
 ```sh
-cd waterfall_alert/app
+cd upstream_kuma/app
 npm install
 npm start            # http://localhost:8099, data in ./data
 npm test
@@ -96,8 +96,8 @@ npm test
 No local Node? Build and run your working copy with Docker:
 
 ```sh
-docker build -t waterfall-alert:dev waterfall_alert
-docker run --rm -p 8099:8099 -v "$PWD/data:/data" waterfall-alert:dev
+docker build -t upstream-kuma:dev upstream_kuma
+docker run --rm -p 8099:8099 -v "$PWD/data:/data" upstream-kuma:dev
 ```
 
 ## License

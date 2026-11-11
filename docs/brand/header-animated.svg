@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="928" height="170" viewBox="8 18 928 170" role="img" aria-label="Upstream Kuma">
-  <!-- The header mark (waterfall_alert/app/public/index.html) as a standalone,
+  <!-- The header mark (upstream_kuma/app/public/index.html) as a standalone,
        transparent, animated file for the README. Keep the two in step. -->
   <style>
     .brand-bed { fill: none; stroke: #153443; stroke-width: 24; stroke-linecap: round; }

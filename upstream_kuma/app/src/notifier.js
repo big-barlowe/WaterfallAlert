@@ -43,7 +43,7 @@ export const providers = {
       const [domain, service] = cfg.service.replace(/^\//, '').split('.');
       if (!domain || !service) throw new Error('Service must look like domain.service');
       const body = domain === 'persistent_notification'
-        ? { title: a.title, message: a.message, notification_id: `waterfall_${a.monitor?.id ?? 'test'}` }
+        ? { title: a.title, message: a.message, notification_id: `upstream_kuma_${a.monitor?.id ?? 'test'}` }
         : { title: a.title, message: a.message };
       await haRequest(`/api/services/${domain}/${service}`, { method: 'POST', body });
     },

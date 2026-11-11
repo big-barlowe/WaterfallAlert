@@ -723,7 +723,7 @@ export function monitoredData(list, m) {
 
 // ---- the All data browser: a value becomes a reading ---------------------------------
 
-const DRAFT_KEY = 'waterfall:newDefinition';
+const DRAFT_KEY = 'upstream-kuma:newDefinition';
 
 // A definition started from a value (pickValueDialog), for the
 // Notifications page to open. Taken once.

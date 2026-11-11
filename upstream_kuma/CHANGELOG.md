@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.0
+
+- **New add-on id, image and repository.** Everything that still said *waterfall* now says *upstream-kuma*: the repository is `github.com/big-barlowe/upstream-kuma`, the add-on's id is `upstream_kuma`, and the Docker image is `ghcr.io/big-barlowe/upstream-kuma`.
+- **Home Assistant:** this is a new add-on, so it starts empty. To move your monitors, use **Export all monitors (CSV)** on the old one's Settings page, add the repository again with the new address, install *Upstream Kuma* and import the file there. Notification channels and rules aren't in the CSV, so set those up again. Then uninstall the old add-on.
+- **Docker:** change the image in your compose file to `ghcr.io/big-barlowe/upstream-kuma`. Keep the same data folder: the database (`waterfall.db`, now `upstream-kuma.db`) is renamed on first start, so nothing is lost.
+- Browser preferences (layout, filters, sizes) start over once, since their keys are renamed.
+
 ## 0.15.0
 
 - **BlueHole is now Upstream Kuma.** New name and header (with its streams flowing like the Falls', including the ones running between the letters). The sidebar entry in Home Assistant is now *Upstream Kuma*; the logo and the Falls' source are unchanged.

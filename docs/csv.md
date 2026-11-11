@@ -69,7 +69,7 @@ So in update mode, include only the columns you want to change. A blank cell in 
 2. the `name` of a row in the file,
 3. the name of a monitor that already exists. This means a file can add monitors underneath something you already have, like your WAN.
 
-Rows can come in any order, so a child can appear before its parent. Leave `parents` blank for a top-level monitor. With more than one parent, `parent_mode` decides when the monitor is blocked (see [Multiple parents](../waterfall_alert/DOCS.md#multiple-parents)).
+Rows can come in any order, so a child can appear before its parent. Leave `parents` blank for a top-level monitor. With more than one parent, `parent_mode` decides when the monitor is blocked (see [Multiple parents](../upstream_kuma/DOCS.md#multiple-parents)).
 
 `key` is only needed when two monitors share a name, e.g. two monitors called `API` under different hosts. Give each a unique key and use that key in `parents`. When it is blank, the key is the name. Exports fill in `key` for monitors whose name is shared (as `API #12`) or contains a `|`.
 

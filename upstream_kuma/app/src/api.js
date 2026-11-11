@@ -467,9 +467,9 @@ export function createApi({ store, engine, icons }) {
     'Cache-Control': 'no-store',
   });
 
-  route('GET', '/api/csv/export', () => csvFile(`waterfall-alert-monitors-${new Date().toISOString().slice(0, 10)}.csv`, exportCsv(store)));
-  route('GET', '/api/csv/template', () => csvFile('waterfall-alert-template.csv', csvTemplate()));
-  route('GET', '/api/csv/example', () => csvFile('waterfall-alert-example.csv', CSV_EXAMPLE));
+  route('GET', '/api/csv/export', () => csvFile(`upstream-kuma-monitors-${new Date().toISOString().slice(0, 10)}.csv`, exportCsv(store)));
+  route('GET', '/api/csv/template', () => csvFile('upstream-kuma-template.csv', csvTemplate()));
+  route('GET', '/api/csv/example', () => csvFile('upstream-kuma-example.csv', CSV_EXAMPLE));
   route('GET', '/api/csv/columns', () => CSV_COLUMNS.map(({ name, types, values, def, required, help }) => ({ name, types, values, def, required, help })));
 
   // With dryRun nothing is saved; the result says what would happen.

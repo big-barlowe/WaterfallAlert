@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: waterfall_alert/app
+        working-directory: upstream_kuma/app
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -19,8 +19,8 @@ jobs:
       - run: npm ci
       - run: npm test
       - name: Build add-on image
-        working-directory: waterfall_alert
-        run: docker build -t waterfall-alert:ci .
+        working-directory: upstream_kuma
+        run: docker build -t upstream-kuma:ci .
 
   # Standalone Docker image on ghcr.io (the Home Assistant add-on still builds
   # locally from the Dockerfile). Every push to main updates :edge; when the
@@ -35,7 +35,7 @@ jobs:
       contents: read
       packages: write
     env:
-      IMAGE: ghcr.io/${{ github.repository_owner }}/waterfall-alert
+      IMAGE: ghcr.io/${{ github.repository_owner }}/upstream-kuma
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -50,7 +50,7 @@ jobs:
         id: version
         run: |
           IMAGE="${IMAGE,,}"
-          VERSION=$(jq -r .version waterfall_alert/app/package.json)
+          VERSION=$(jq -r .version upstream_kuma/app/package.json)
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "minor=${VERSION%.*}" >> "$GITHUB_OUTPUT"
@@ -79,7 +79,7 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: waterfall_alert
+          context: upstream_kuma
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
