@@ -460,7 +460,7 @@ function branch(m, parentId, path, depth) {
 }
 
 function row(m, parentId, path, depth, hasKids) {
-  const active = ui.route?.name === 'monitor' ? ui.route.id === m.id : ui.route?.name === 'dashboard' && ui.info === m.id;
+  const active = ['monitor', 'snmp'].includes(ui.route?.name) ? ui.route.id === m.id : ui.route?.name === 'dashboard' && ui.info === m.id;
   const open = !ui.collapsed.has(path);
   // Under a parent in the tree: the others it hangs from. In a flat list
   // (search, the valve closed): all of them, but only if there are several.
@@ -521,10 +521,11 @@ function row(m, parentId, path, depth, hasKids) {
   }, hasKids ? (open ? '▾' : '▸') : ''),
   ui.editMode ? h('span', { class: 'grip', 'aria-hidden': 'true' }, '⠿') : null,
   // A click traces the monitor in the Falls with its details open, as a
-  // click there would; the details have a link to its full page.
+  // click there would; the details have a link to its full page. On a
+  // monitor's full page (or its All data), it opens that monitor's page.
   h('a', {
     class: 'row-main',
-    href: `#/?focus=${m.id}&info=${m.id}`,
+    href: ['monitor', 'snmp'].includes(ui.route?.name) ? `#/monitor/${m.id}` : `#/?focus=${m.id}&info=${m.id}`,
     draggable: 'false',
     onclick: (e) => {
       if (e.shiftKey || e.metaKey || e.ctrlKey) {

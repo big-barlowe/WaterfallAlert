@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.1
+
+- **On a monitor's full page, clicking another monitor in the list opens its full page** (as before 0.17.0), instead of jumping to the Falls. Elsewhere, a click still traces it in the Falls with its details open.
+
 ## 0.17.0
 
 - **Rings is the default layout** of the Falls (the tree is one click away, top-right). A layout you picked before is kept.

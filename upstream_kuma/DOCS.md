@@ -60,7 +60,7 @@ It works like a map:
 - **Click a monitor** to trace it: the diagram shows only what it depends on (upstream) and what depends on it (downstream). Downstream monitors get a little smaller with each step away from it, so the nearest stand out. Click it again, press <kbd>Esc</kbd>, click empty space or use **Show all** to see everything. **Trace in Falls** on a monitor's page does the same.
 - **Click the source** (the blue pool everything flows from) to trace from there: everything stays, and each monitor gets a little smaller with each step away from the source, so the top of your network stands out. Click it again or use **Show all** to go back.
 - **The expand button** (top-right corner of a monitor) opens a details panel with its status, response times, heartbeats and its full upstream and downstream lists. Click a monitor in those lists to trace that one instead. **Full details →** opens the monitor's own page.
-- **Click a monitor in the list** and the Falls traces it with its details panel open, as if you'd clicked it there; its row stays highlighted.
+- **Click a monitor in the list** and the Falls traces it with its details panel open, as if you'd clicked it there; its row stays highlighted. While you're on a monitor's full page, a click opens that monitor's full page instead.
 - **Select monitors** to tag or move several at once: shift-click (or ctrl/⌘-click) them, or hold <kbd>Shift</kbd> and drag a box around them. <kbd>Alt</kbd>/<kbd>⌥</kbd>-drag removes from the selection instead. On a touch screen, tap **Select** first; one finger then draws the box and two fingers move and zoom. The selection is shared with the monitor list. See [Tags](#tags) and [Arranging monitors](#arranging-monitors).
 
 ## Tags
