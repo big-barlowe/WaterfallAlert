@@ -50,6 +50,32 @@ export function lineage(monitors, id) {
   return { up: walk('parents'), down: walk('children') };
 }
 
+// The focus id for the source itself: tracing it keeps every monitor and
+// sizes each one by how far it is from the source, like a traced monitor's
+// downstream.
+export const SOURCE = 'source';
+
+// Each monitor's distance from the source (1 for the top level), along the
+// shortest path.
+function fromSource(monitors) {
+  const byId = new Map(monitors.map((m) => [m.id, m]));
+  const dist = new Map();
+  let frontier = monitors.filter((m) => !m.parents.some((p) => byId.has(p))).map((m) => m.id);
+  for (const id of frontier) dist.set(id, 1);
+  for (let d = 2; frontier.length; d++) {
+    const next = [];
+    for (const x of frontier) {
+      for (const c of byId.get(x).children ?? []) {
+        if (!byId.has(c) || dist.has(c)) continue;
+        dist.set(c, d);
+        next.push(c);
+      }
+    }
+    frontier = next;
+  }
+  return { up: new Map(), down: dist };
+}
+
 // What both layouts share: each node's level (one below its deepest
 // parent), its "primary" parent (that deepest one, so the hierarchy reads as
 // a tidy tree; extra parents get secondary streams), and its slot: leaves
@@ -137,6 +163,8 @@ function treeLayout(monitors, nodeH, scaleOf = () => 1) {
 // flexible: each monitor sits just beyond its parent, pushed out only as far
 // as it takes to clear what is already placed, so the shape stays compact
 // rather than perfectly round. A small diagram opens downward as a fan.
+// Room the source takes up (the warbling hole, HOLE.scale × node.svg's rim).
+const HOLE_BOX = { w: 80, h: 80 };
 const RING = { gap: NODE_H + 36, margin: 10, perSlot: (40 * Math.PI) / 180, top: (44 * Math.PI) / 180 };
 
 function ringLayout(monitors, nodeH, scaleOf = () => 1) {
@@ -212,6 +240,9 @@ function ringLayout(monitors, nodeH, scaleOf = () => 1) {
     placed.push({ x: 0, y: 0, w: NODE_W, h: nodeH }); // the source
   }
   const src = hub != null ? { x: 0, y: -trunk.length * STEP - nodeH / 2 - 40 } : { x: 0, y: 0 };
+  // The source above the hub (or its trunk) is in the way too: without this,
+  // a hub that branches straight away (no trunk) gets a child drawn over it.
+  if (hub != null) placed.push({ x: src.x, y: src.y, ...HOLE_BOX });
   const radius = new Map(hub != null ? [[hub, 0]] : []);
   const parentOf = new Map();
   for (const [id, k] of kids) for (const c of k) parentOf.set(c, id);
@@ -478,7 +509,7 @@ function warbleFrames(d, { amp, lobes: [k1, k2], dir = 1, frames = 12 }) {
 const STILL = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 let holeFrames = null;
 
-function sourceHole(x, y) {
+function sourceHole(x, y, focused) {
   const [cx, cy] = HOLE.c;
   const s = HOLE.scale;
   holeFrames ??= {
@@ -491,17 +522,25 @@ function sourceHole(x, y) {
   // The rim goes under the streams and the water over them, so the streams
   // seem to come out of the water.
   return {
-    under: svg('g', { class: 'source source-rim', ...at }, svg('path', { class: 'hole-rim', d: HOLE.rim }, warble(holeFrames.rim, '7s'))),
-    over: svg('g', { class: 'source', ...at },
+    under: svg('g', { class: `source source-rim${focused ? ' focused' : ''}`, ...at }, svg('path', { class: 'hole-rim', d: HOLE.rim }, warble(holeFrames.rim, '7s'))),
+    over: svg('g', {
+      class: `source${focused ? ' focused' : ''}`,
+      ...at,
+      tabindex: 0,
+      role: 'button',
+      'aria-pressed': String(Boolean(focused)),
+      'aria-label': focused ? 'Upstream Kuma, traced. Activate to show everything.' : 'Trace everything from the source, smaller the further downstream',
+    },
+      svg('title', {}, focused ? 'Show everything' : 'Trace from the source'),
       svg('path', { class: 'hole-water', d: HOLE.water }, warble(holeFrames.water, '5s')),
       svg('path', { class: 'hole-core', d: HOLE.core })),
   };
 }
 
 export class FlowView {
-  constructor(container, { onSelect, onExpand, onClear, onToggle, onMarquee, onLayout, view, height = null, layout = 'tree' }) {
+  constructor(container, { onSelect, onExpand, onClear, onToggle, onMarquee, onLayout, view, height = null, layout = 'rings' }) {
     this.userH = height;
-    this.mode = LAYOUTS[layout] ? layout : 'tree';
+    this.mode = LAYOUTS[layout] ? layout : 'rings';
     this.onLayout = onLayout;
     this.container = container;
     this.onSelect = onSelect;
@@ -596,6 +635,7 @@ export class FlowView {
   }
 
   // With `focusId`, only that monitor's upstream and downstream are drawn.
+  // With SOURCE, everything is, smaller the further it is from the source.
   // Monitors may carry `tagList` ([{name, color}]) and `context` (shown only
   // because something below them matches the filter; drawn faded).
   render(monitors, focusId = null, { selected = new Set(), selectMode = false } = {}) {
@@ -610,10 +650,11 @@ export class FlowView {
       this.nodeEls = new Map();
       return;
     }
-    const focus = monitors.some((m) => m.id === focusId) ? focusId : null;
+    const focus = focusId === SOURCE || monitors.some((m) => m.id === focusId) ? focusId : null;
     let shown = monitors;
     let rel = null;
-    if (focus != null) {
+    if (focus === SOURCE) rel = fromSource(monitors);
+    else if (focus != null) {
       rel = lineage(monitors, focus);
       const keep = new Set([focus, ...rel.up.keys(), ...rel.down.keys()]);
       shown = monitors.filter((m) => keep.has(m.id)).map((m) => ({ ...m, parents: m.parents.filter((p) => keep.has(p)), allParents: m.parents }));
@@ -629,8 +670,8 @@ export class FlowView {
 
     this.topology = key;
     const nodeH = monitors.some((m) => m.tagList?.length) ? TAGGED_H : NODE_H;
-    // Tracing a monitor, everything downstream of it gets a little smaller
-    // with each step away.
+    // Tracing a monitor (or the source), everything downstream of it gets a
+    // little smaller with each step away.
     const scaleOf = (id) => (rel?.down.has(id) ? Math.max(SHRINK.min, SHRINK.step ** rel.down.get(id)) : 1);
     const L = (this.mode === 'rings' ? ringLayout : treeLayout)(monitors, nodeH, scaleOf);
     const { pos, width, height } = L;
@@ -730,7 +771,12 @@ export class FlowView {
       this.nodeEls.set(m.id, { g, inner, pool, title, sub, role, tags: m.tagList ?? [], s: scale });
     }
 
-    const hole = sourceHole(srcX, srcY);
+    const hole = sourceHole(srcX, srcY, focus === SOURCE);
+    hole.over.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      this.onSelect(SOURCE);
+    });
 
     this.viewEl = svg('g', { class: 'viewport' }, hole.under, edges, nodes, hole.over);
     const root = svg('svg', {
@@ -739,7 +785,8 @@ export class FlowView {
       'aria-label': 'Monitor hierarchy flow diagram. Drag to move around; hold Ctrl or ⌘ and scroll, or pinch, to zoom.',
       onclick: (e) => {
         if (this.#swallowClick()) return;
-        if (!e.target.closest('.node')) this.onClear();
+        if (e.target.closest('.source') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !this.selectMode) this.onSelect(SOURCE);
+        else if (!e.target.closest('.node')) this.onClear();
       },
       onpointerdown: (e) => this.#down(e),
       onpointermove: (e) => this.#move(e),
@@ -766,14 +813,19 @@ export class FlowView {
     this.gesture = null;
     this.pointers.clear();
 
-    this.content = { width, height, anchor: focus != null ? { x: pos.get(focus).x + pos.get(focus).w / 2, y: pos.get(focus).y + pos.get(focus).h / 2 } : L.centre ?? null };
+    const oldSource = this.sourceAt;
+    this.sourceAt = { x: srcX, y: srcY };
+    const anchor = focus === SOURCE ? this.sourceAt
+      : focus != null ? { x: pos.get(focus).x + pos.get(focus).w / 2, y: pos.get(focus).y + pos.get(focus).h / 2 }
+      : L.centre ?? null;
+    this.content = { width, height, anchor };
     const fitKey = JSON.stringify([this.mode, focus, monitors.map((m) => m.id)]);
     const v = this.view;
     const keyChanged = v.key !== fitKey || v.k == null;
     // Leaving a trace: the monitor that was traced stays exactly where it is
     // on screen, at the same zoom, and the rest fills in around it.
-    const was = keyChanged && focus == null ? oldBoxes?.get(v.focus) : null;
-    const now = was && this.boxes.get(v.focus);
+    const was = keyChanged && focus == null ? (v.focus === SOURCE ? oldSource : oldBoxes?.get(v.focus)) : null;
+    const now = was && (v.focus === SOURCE ? this.sourceAt : this.boxes.get(v.focus));
     v.key = fitKey;
     v.focus = focus;
     if (keyChanged) v.auto = true;

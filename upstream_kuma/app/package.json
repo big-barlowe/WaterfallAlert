@@ -1,6 +1,6 @@
 {
   "name": "upstream-kuma",
-  "version": "0.16.1",
+  "version": "0.17.0",
   "description": "Hierarchical uptime monitoring with root-cause alerting",
   "type": "module",
   "main": "src/server.js",

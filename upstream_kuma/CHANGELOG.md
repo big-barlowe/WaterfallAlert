@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.17.0
+
+- **Rings is the default layout** of the Falls (the tree is one click away, top-right). A layout you picked before is kept.
+- **Trace from the source.** Click the blue pool at the top (or centre) of the Falls: everything stays, and each monitor gets a little smaller with each step away from the source, just like tracing a monitor. Click it again or use **Show all** to go back.
+- **The list's lines are streams now**, drawn like the Falls': a soft bed with flowing water and foam, red dashes below a monitor that's down, grey below one that's paused or blocked.
+- **A more compact list.** Less indentation and tighter rows, and the list starts 380px wide so the full heartbeats and uptime fit; a width you dragged it to is kept (double-click the handle for the new default). With room, each monitor shows its last 10 heartbeats and its uptime; drag the list narrower and the heartbeats get shorter (7, then 4 beats, with the uptime in their tooltip) and finally become a status dot, so names keep their room.
+- **The valve** (left of the search box) turns the list's hierarchy off: closed, it lists every monitor alphabetically, like search results, and the streams stop. Open it again for the hierarchy. Your choice is remembered.
+- **Clicking a monitor in the list traces it in the Falls** with its details panel open, instead of opening its page (**Full details →** in the panel still does). Its row stays highlighted.
+- **The details panel's buttons** (*Check now*, *Edit*, *Full details*) sit near the top, under the status, so a monitor with a long *Depends on* or *Feeds* list doesn't push them out of reach.
+- **Fixed:** in the rings layout, tracing a monitor that branches straight away (a core router with nothing above it, say) could draw one of its children over the source.
+- **Moving monitors in the list needs Edit.** Dragging a monitor's icon or name could still move it onto another monitor outside Edit mode; now only Edit mode moves anything, and **Move…** for selected monitors is there too.
+
 ## 0.16.1
 
 - **A filter keeps your trace.** Filtering while you trace a monitor no longer jumps elsewhere when that monitor doesn't match: it stays (faded, with the monitors above it) and shows nothing below it, and the bar says how many monitors downstream match the filter. It drops out once you leave the trace, as it would if you'd filtered the whole view.

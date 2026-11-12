@@ -1,5 +1,5 @@
 import { api, h, svg, toast, modal, confirmDialog, storage, store, STATUS_LABEL, BEAT_STATUS, TYPE_LABEL, fmtTime, fmtAgo, fmtPct, fmtMs, fill } from './util.js';
-import { FlowView, lineage } from './flow.js';
+import { FlowView, lineage, SOURCE } from './flow.js';
 import { iconEl } from './icons.js';
 import { heartbeatBar, responseChart } from './chart.js';
 import { renderMonitorForm, iconChooser } from './forms.js';
@@ -17,6 +17,7 @@ const ui = {
   editMode: false,
   search: '',
   collapsed: new Set(storage('collapsed', [])),
+  flatList: storage('flatList', false), // list: alphabetical, without the hierarchy (the valve)
   route: null,
   chartHours: storage('chartHours', 24),
   drag: null,
@@ -35,7 +36,7 @@ const ui = {
   flowView: {},       // falls diagram zoom and position, kept across visits
   popout: null,       // 'side' or 'falls': popped out to fill the window
   fallsHeight: storage('fallsHeight', null), // dragged height of the Falls map; null = automatic
-  fallsLayout: storage('fallsLayout', 'tree'), // 'tree' or 'rings'
+  fallsLayout: storage('fallsLayout', 'rings'), // 'rings' (default) or 'tree'
   snmpAllIfs: false,               // SNMP interfaces: list disabled ones and loopbacks too
   snmpEdit: false,                 // SNMP sections in customize mode (hide items, pick the card)
 };
@@ -239,6 +240,25 @@ function renderSummary() {
 let treeView = null; // filterView() for the current tree render
 
 function renderTree() {
+  drawTree();
+  fitBeats();
+}
+
+// At full size the heartbeats come with the uptime %; narrower, they get
+// shorter (7, then 4 beats, without the %) and finally become a status dot,
+// whatever fits the widest row. Rerun on every render and whenever the list
+// is resized.
+const BEAT_STEPS = ['full', '7', '4', 'dot'];
+function fitBeats() {
+  const tree = $('#tree');
+  if (!tree?.clientWidth) return;
+  for (const step of BEAT_STEPS) {
+    tree.dataset.beats = step;
+    if (tree.scrollWidth <= tree.clientWidth) return;
+  }
+}
+
+function drawTree() {
   const host = $('#tree');
   const q = ui.search.trim().toLowerCase();
   const vis = filterView();
@@ -249,6 +269,9 @@ function renderTree() {
   $('#edit-toggle').textContent = ui.editMode ? 'Done' : 'Edit';
   $('#edit-toggle').setAttribute('aria-pressed', String(ui.editMode));
   $('#edit-hint').hidden = !ui.editMode;
+  const valve = $('#flow-toggle');
+  valve.setAttribute('aria-pressed', String(!ui.flatList));
+  valve.title = ui.flatList ? 'Flat list: open the valve to show the hierarchy' : 'Hierarchy: close the valve for a flat, alphabetical list';
 
   if (!state.monitors.length) {
     fill(host, h('div', { class: 'tree-empty' },
@@ -260,6 +283,15 @@ function renderTree() {
   if (q) {
     const hits = state.monitors.filter((m) => (!vis || vis.match.has(m.id)) && (m.name.toLowerCase().includes(q) || m.target.toLowerCase().includes(q))).sort(byName);
     fill(host, hits.length ? h('div', { class: 'branch root' }, hits.map((m) => row(m, null, `s${m.id}`, 0, false))) : h('p', { class: 'muted pad' }, 'No matches.'));
+    return;
+  }
+
+  // The valve closed: every monitor (that the filter matches) alphabetically,
+  // like search results.
+  if (ui.flatList && (!vis || vis.match.size)) {
+    ui.anyIcons = state.monitors.some((m) => m.icon);
+    const all = state.monitors.filter((m) => !vis || vis.match.has(m.id)).sort(byName);
+    fill(host, h('div', { class: 'branch root' }, all.map((m) => row(m, null, `f${m.id}`, 0, false))));
     return;
   }
 
@@ -428,14 +460,23 @@ function branch(m, parentId, path, depth) {
 }
 
 function row(m, parentId, path, depth, hasKids) {
-  const active = ui.route?.name === 'monitor' && ui.route.id === m.id;
+  const active = ui.route?.name === 'monitor' ? ui.route.id === m.id : ui.route?.name === 'dashboard' && ui.info === m.id;
   const open = !ui.collapsed.has(path);
-  const otherParents = m.parents.filter((p) => p !== parentId).map((p) => state.byId.get(p)?.name).filter(Boolean);
+  // Under a parent in the tree: the others it hangs from. In a flat list
+  // (search, the valve closed): all of them, but only if there are several.
+  const otherParents = (parentId == null && m.parents.length < 2 ? [] : m.parents.filter((p) => p !== parentId))
+    .map((p) => state.byId.get(p)?.name).filter(Boolean);
 
   const el = h('div', {
     class: `row ${m.status}${active ? ' active' : ''}${ui.selected.has(m.id) ? ' selected' : ''}${treeView && !treeView.match.has(m.id) ? ' context' : ''}`,
     draggable: ui.editMode ? 'true' : null,
     ondragstart: (e) => {
+      // Only Edit mode moves monitors. Outside it a drag can still start on
+      // an icon image or selected text, and must not turn into a move.
+      if (!ui.editMode) {
+        e.preventDefault();
+        return;
+      }
       ui.drag = dragSet(m.id, parentId);
       e.dataTransfer.effectAllowed = 'copyMove';
       e.dataTransfer.setData('text/plain', ui.drag.ids.join(','));
@@ -453,7 +494,7 @@ function row(m, parentId, path, depth, hasKids) {
       document.querySelectorAll('.drop-target,.dragging').forEach((n) => n.classList.remove('drop-target', 'dragging'));
     },
     ondragover: (e) => {
-      if (!ui.drag || !canDrop(ui.drag, m.id)) return;
+      if (!ui.editMode || !ui.drag || !canDrop(ui.drag, m.id)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = e.altKey ? 'copy' : 'move';
       el.classList.add('drop-target');
@@ -462,7 +503,7 @@ function row(m, parentId, path, depth, hasKids) {
     ondrop: (e) => {
       e.preventDefault();
       el.classList.remove('drop-target');
-      if (ui.drag && canDrop(ui.drag, m.id)) move(ui.drag, m.id, e.altKey);
+      if (ui.editMode && ui.drag && canDrop(ui.drag, m.id)) move(ui.drag, m.id, e.altKey);
     },
   },
   h('button', {
@@ -479,14 +520,23 @@ function row(m, parentId, path, depth, hasKids) {
     },
   }, hasKids ? (open ? '▾' : '▸') : ''),
   ui.editMode ? h('span', { class: 'grip', 'aria-hidden': 'true' }, '⠿') : null,
+  // A click traces the monitor in the Falls with its details open, as a
+  // click there would; the details have a link to its full page.
   h('a', {
     class: 'row-main',
-    href: `#/monitor/${m.id}`,
+    href: `#/?focus=${m.id}&info=${m.id}`,
     draggable: 'false',
     onclick: (e) => {
-      if (!e.shiftKey && !e.metaKey && !e.ctrlKey) return;
+      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        e.preventDefault();
+        toggleSelected(m.id, parentId);
+        return;
+      }
+      // Already on the Falls: no re-route, so the diagram animates over.
+      if (ui.route?.name !== 'dashboard') return;
       e.preventDefault();
-      toggleSelected(m.id, parentId);
+      if (ui.popout === 'side') setPopout(null);
+      setFocus(m.id, m.id);
     },
   },
     // With icons, the status dot sits on the icon's corner to save width.
@@ -496,7 +546,7 @@ function row(m, parentId, path, depth, hasKids) {
     h('span', { class: 'row-name' }, m.name),
     sevMark(m),
     tagDots(m),
-    otherParents.length ? h('span', { class: 'also', title: `Also under: ${otherParents.join(', ')}` }, '⑂') : null),
+    otherParents.length ? h('span', { class: 'also', title: `${parentId == null ? 'Under' : 'Also under'}: ${otherParents.join(', ')}` }, '⑂') : null),
   ui.editMode
     ? h('span', { class: 'row-actions' },
       h('button', { class: 'icon-btn', title: 'Add a monitor under this one', onclick: () => go(`#/add?parent=${m.id}`) }, '+'),
@@ -507,9 +557,13 @@ function row(m, parentId, path, depth, hasKids) {
         title: `Detach from ${state.byId.get(parentId)?.name}`,
         onclick: () => unlink(parentId, m.id),
       }, '⨯') : null)
-    : h('span', { class: 'row-meta' },
-      m.type === 'group' ? h('span', { class: 'muted small' }, `${m.children.length}`) : heartbeatBar(m.beats, 10, { compact: true }),
-      m.type === 'group' ? null : h('span', { class: 'pct' }, m.uptime24 == null ? '' : fmtPct(m.uptime24).replace('.00', ''))));
+    // The uptime shows when the list is wide enough, and is in the tooltip.
+    : h('span', { class: 'row-meta', title: m.type === 'group' || m.uptime24 == null ? null : `Uptime (24h): ${fmtPct(m.uptime24)}` },
+      m.type === 'group' ? h('span', { class: 'muted small' }, `${m.children.length}`) : [
+        heartbeatBar(m.beats, 10, { compact: true }),
+        h('span', { class: 'pct' }, m.uptime24 == null ? '' : fmtPct(m.uptime24).replace('.00', '')),
+        h('span', { class: `dot meta-dot ${m.status}`, title: STATUS_LABEL[m.status] }),
+      ]));
   el.style.setProperty('--depth', depth);
   return el;
 }
@@ -596,14 +650,14 @@ function renderTreeSelect() {
   fill(box,
     h('div', { class: 'tree-select-head' },
       h('strong', null, `${n} selected`),
-      h('button', { class: 'btn small', onclick: () => moveDialog(selectionSet()) }, 'Move…'),
+      ui.editMode ? h('button', { class: 'btn small', onclick: () => moveDialog(selectionSet()) }, 'Move…') : null,
       h('button', { class: 'btn small ghost', onclick: () => setSelection([]) }, 'Clear')),
-    h('p', { class: 'muted small' }, ui.editMode ? 'Drag any of them to move them all.' : 'Shift-click to add or remove more. Tag them in the Falls.'));
+    h('p', { class: 'muted small' }, ui.editMode ? 'Drag any of them to move them all.' : 'Shift-click to add or remove more. Tag them in the Falls, or move them with Edit.'));
 }
 
 // ---- layout: list width and pop-out -------------------------------------------
 
-const SIDE_W = { min: 240, def: 340 };
+const SIDE_W = { min: 220, def: 380 };
 
 function setSideWidth(px, save = true) {
   const handle = $('#side-resize');
@@ -620,6 +674,7 @@ function setSideWidth(px, save = true) {
 function initSideResize() {
   const handle = $('#side-resize');
   setSideWidth(storage('sideWidth', SIDE_W.def), false);
+  new ResizeObserver(() => fitBeats()).observe($('#tree'));
   handle.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -790,12 +845,12 @@ async function renderDashboard(isUpdate = false) {
       h('div', { class: 'stat-label' }, h('span', { class: `dot ${k}` }), STATUS_LABEL[k]))));
 
   const vis = filterView();
-  if (!state.byId.has(ui.focus)) ui.focus = null;
+  if (ui.focus !== SOURCE && !state.byId.has(ui.focus)) ui.focus = null;
   if (!state.byId.has(ui.info)) ui.info = null;
   // A filter never moves you off the monitor you're tracing: if it hides that
   // monitor, it stays (with the chain above it, as context) until you leave
   // the trace, and simply has nothing matching below it.
-  const keep = vis && ui.focus != null && !vis.show.has(ui.focus) ? new Set([ui.focus, ...ancestorsOf(ui.focus)]) : null;
+  const keep = vis && ui.focus != null && ui.focus !== SOURCE && !vis.show.has(ui.focus) ? new Set([ui.focus, ...ancestorsOf(ui.focus)]) : null;
   const shown = state.monitors.filter((m) => !vis || vis.show.has(m.id) || keep?.has(m.id))
     .map((m) => ({ ...m, tagList: tagsOf(m), context: Boolean(vis && !vis.match.has(m.id)) }));
   flow.render(shown, ui.focus, { selected: ui.selected, selectMode: ui.selectMode });
@@ -823,9 +878,10 @@ async function renderDashboard(isUpdate = false) {
 }
 
 // Clicking a node traces its lineage; clicking it again shows everything.
+// The source (SOURCE) traces everything by distance; it has no details.
 function selectNode(id) {
   if (ui.focus === id) setFocus(null, null);
-  else setFocus(id, ui.info == null ? null : id);
+  else setFocus(id, ui.info == null || id === SOURCE ? null : id);
 }
 
 function expandNode(id) {
@@ -898,12 +954,14 @@ function setFocus(focus, info) {
   if (info != null) qs.set('info', info);
   history.replaceState(null, '', `#/${qs.size ? `?${qs}` : ''}`);
   renderDashboard(true);
+  renderTree(); // the list highlights the monitor whose details are open
   if (info != null && matchMedia('(max-width: 1100px)').matches) $('#flow-info')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function renderFocusBar(vis) {
   const f = state.byId.get(ui.focus);
   const filtered = state.tags.filter((t) => ui.tagFilter.has(t.id));
+  const showAll = h('button', { class: 'btn small', onclick: () => setFocus(null, null) }, 'Show all');
   // The filter in use (click it to edit it), or a button to add one.
   const toggleEditor = () => (ui.fallsFilter ? closeFallsFilter() : openFallsFilter());
   const filterChip = vis ? h('span', { class: 'focus-chip filter-chip' },
@@ -921,6 +979,16 @@ function renderFocusBar(vis) {
       'aria-expanded': String(ui.fallsFilter),
       onclick: toggleEditor,
     }, '+ Filter') : null;
+  if (ui.focus === SOURCE) {
+    const n = vis ? vis.match.size : state.monitors.length;
+    fill($('#flow-focus'), filterChip,
+      h('span', { class: 'focus-chip' },
+        h('span', { class: 'dot source' }),
+        h('span', null, 'Upstream Kuma'),
+        h('span', { class: 'muted' }, ` · ${n === 1 ? '1 monitor' : `${n} monitors`}, smaller the further downstream`)),
+      showAll);
+    return;
+  }
   if (!f) {
     fill($('#flow-focus'), filterChip, state.monitors.length && !vis ? h('span', { class: 'muted small' }, 'Click a monitor to trace what it depends on') : null);
     return;
@@ -934,7 +1002,7 @@ function renderFocusBar(vis) {
       h('span', null, f.name),
       h('span', { class: 'muted' }, ` · ${rel.up.size} upstream · ${rel.down.size} downstream`
         + (vis && rel.down.size ? ` (${matching} match the filter)` : ''))),
-    h('button', { class: 'btn small', onclick: () => setFocus(null, null) }, 'Show all'));
+    showAll);
 }
 
 function renderInfo() {
@@ -971,6 +1039,11 @@ function renderInfo() {
       h('span', { class: `badge ${m.status}` }, STATUS_LABEL[m.status]),
       m.type === 'group' ? null : h('span', { class: 'muted small' }, `checked ${fmtAgo(m.lastCheck)} · every ${m.interval}s`)),
     m.msg ? h('p', { class: 'info-msg' }, m.msg) : null,
+    // Near the top: the upstream and downstream lists below can get long.
+    h('div', { class: 'info-actions' },
+      m.type !== 'group' ? h('button', { class: 'btn small', onclick: () => action(`monitors/${m.id}/check`, 'Checked') }, 'Check now') : null,
+      h('a', { class: 'btn small', href: `#/monitor/${m.id}/edit` }, 'Edit'),
+      h('a', { class: 'btn small primary', href: `#/monitor/${m.id}` }, 'Full details →')),
     m.description ? h('p', { class: 'muted small' }, m.description) : null,
     m.type === 'snmp' ? snmpSummary(m, snmpSnapshot(m.id, m.lastCheck, () => ui.info === m.id && renderInfo())) : null,
     h('div', { class: 'info-tags' },
@@ -996,11 +1069,7 @@ function renderInfo() {
       m.parents.length > 1 ? h('p', { class: 'muted small' }, m.parentMode === 'any' ? 'Blocked only when every parent is down.' : 'Blocked when any parent is down.') : null),
     h('div', { class: 'info-rel' },
       h('h4', null, h('span', { class: 'rel-icon down' }, '↓'), 'Feeds', h('span', { class: 'count' }, down.length)),
-      chips(down, 'Nothing depends on this.')),
-    h('div', { class: 'info-actions' },
-      m.type !== 'group' ? h('button', { class: 'btn small', onclick: () => action(`monitors/${m.id}/check`, 'Checked') }, 'Check now') : null,
-      h('a', { class: 'btn small', href: `#/monitor/${m.id}/edit` }, 'Edit'),
-      h('a', { class: 'btn small primary', href: `#/monitor/${m.id}` }, 'Full details →')));
+      chips(down, 'Nothing depends on this.')));
 }
 
 function eventTable(events, withName) {
@@ -1490,7 +1559,7 @@ function parseRoute() {
   if (parts[0] === 'settings') return { name: 'settings' };
   if (parts[0] === 'tags') return { name: 'tags' };
   const num = (k) => (params.get(k) ? Number(params.get(k)) : null);
-  return { name: 'dashboard', focus: num('focus'), info: num('info') };
+  return { name: 'dashboard', focus: params.get('focus') === SOURCE ? SOURCE : num('focus'), info: num('info') };
 }
 
 async function route() {
@@ -1527,6 +1596,11 @@ async function route() {
 $('#side-pop').addEventListener('click', () => setPopout(ui.popout === 'side' ? null : 'side'));
 initSideResize();
 setPopout(null);
+$('#flow-toggle').addEventListener('click', () => {
+  ui.flatList = !ui.flatList;
+  store('flatList', ui.flatList);
+  renderTree();
+});
 $('#edit-toggle').addEventListener('click', () => {
   ui.editMode = !ui.editMode;
   renderTree();
