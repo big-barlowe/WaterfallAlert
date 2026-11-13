@@ -854,6 +854,7 @@ export class FlowView {
       glowFilter('glow-box', { x: '-50%', y: '-50%', width: '200%', height: '200%' })),
     this.viewEl);
     this.holeOff = undefined;
+    this.rasterK = null;
     fill(this.container, this.holeLayers[0], this.streamsEl, this.canvas, root, this.marks, this.holeLayers[1], this.controls, this.hint);
     this.dirty = true;
     this.#startWater();
@@ -949,12 +950,34 @@ export class FlowView {
   }
 
   // Where the diagram is drawn right now (the view, or part-way to it). The
-  // layers are composited (will-change), so a pan only moves pixels; the
-  // browser draws them again at a new zoom by itself.
+  // layers are composited (will-change), so a pan only moves pixels.
   #show(p) {
     this.shown = p;
     const transform = `translate(${p.x}px, ${p.y}px) scale(${p.k})`;
     for (const el of this.#layers()) el.style.transform = transform;
+    this.#sharpenLater();
+  }
+
+  // Chrome keeps a composited layer at the scale it was first drawn at, so
+  // zooming in enlarges its pixels. Once a zoom settles well past that scale
+  // (in, or far enough out that it's drawing far more than it shows), the
+  // layers are drawn again at the current one: dropping will-change for a
+  // frame does that. (Headless Chrome redraws by itself; a real window
+  // doesn't.) It repaints the diagram once, so not on every zoom step.
+  #sharpenLater() {
+    const k = this.shown?.k;
+    if (!k) return;
+    this.rasterK ??= k; // new layers start at the current zoom
+    clearTimeout(this.sharpTimer);
+    if (k <= this.rasterK * 1.1 && k >= this.rasterK * 0.5) return;
+    this.sharpTimer = setTimeout(() => {
+      if (this.glide || this.gesture) return this.#sharpenLater();
+      this.rasterK = this.shown.k;
+      const els = this.#layers();
+      for (const el of els) el.style.willChange = 'auto';
+      // two frames: the first is drawn without it, the second puts it back
+      requestAnimationFrame(() => requestAnimationFrame(() => els.forEach((el) => (el.style.willChange = ''))));
+    }, 250);
   }
 
   #layers() {

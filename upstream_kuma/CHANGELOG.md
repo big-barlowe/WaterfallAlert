@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.3
+
+- **Fixed: the Falls looked pixelated after zooming in** (until you traced a monitor and went back). The diagram is moved as one picture since 0.17.2, and the browser kept that picture at the zoom it was first drawn at. Now it's drawn again, sharp, a moment after you stop zooming.
+
 ## 0.17.2
 
 - **The Falls flows at every zoom**, however many monitors are on screen. Before, the water stopped once more than 300 streams were in view.
