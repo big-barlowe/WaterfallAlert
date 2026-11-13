@@ -81,7 +81,7 @@ kbd { background: var(--panel-2); border: 1px solid var(--border); border-radius
 .brand { display: flex; align-items: center; flex-shrink: 0; border-radius: 10px; }
 .brand:hover { text-decoration: none; }
 .brand-mark { display: block; height: 42px; width: auto; overflow: visible; }
-/* the stream in the mark moves like the Falls' streams (.water, .sparkle),
+/* the stream in the mark moves like the Falls' streams (water and foam),
    at the same speed for its size */
 .brand-bed { fill: none; stroke: #153443; stroke-width: 24; stroke-linecap: round; }
 .brand-stream { fill: none; stroke: #03c1f5; stroke-width: 9; stroke-linecap: round; }
@@ -322,7 +322,7 @@ body.popout-falls .flow-select { position: static; }
 
 /* Each level is drawn like a stream in the Falls, running down under the
    parent's twisty: a soft bed, rounded water dashes and foam (::after), at
-   the same sizes and speeds as .bed/.water/.sparkle there. */
+   the same sizes and speeds as the Falls' bed, water and foam. */
 .branch { position: relative; }
 .branch:not(.root) { padding-left: 16px; }
 .branch:not(.root)::before,
@@ -346,6 +346,7 @@ body.popout-falls .flow-select { position: static; }
 }
 .branch.dry::before { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='11'%3E%3Crect x='3' width='2' height='4' rx='1' fill='%23f87171' fill-opacity='0.55'/%3E%3C/svg%3E") 0 0 / 8px 11px repeat-y, rgba(248, 113, 113, 0.12); }
 .branch.still::before { background: linear-gradient(rgba(100, 116, 139, 0.55), rgba(100, 116, 139, 0.55)) center / 2px 100% no-repeat, rgba(100, 116, 139, 0.15); }
+.branch.unseen::before, .branch.unseen::after { animation: none; }
 @keyframes tree-water { to { background-position: 0 24px, 0 0; } }
 @keyframes tree-foam { to { background-position: 0 28px; } }
 
@@ -423,10 +424,14 @@ body.popout-falls .flow-select { position: static; }
 .key.still::before { background: var(--blocked); }
 /* The Falls is a map: drag to pan, ctrl/⌘ + scroll or pinch to zoom. */
 .flow-map { position: relative; overflow: hidden; border-radius: 12px; background: rgba(4, 17, 31, 0.35); border: 1px solid var(--border-soft); }
-.flow-svg { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
-.flow-svg.panning { cursor: grabbing; }
-.flow-svg.selecting { cursor: crosshair; }
-.flow-svg .viewport.glide { transition: transform 0.3s cubic-bezier(.2, .75, .25, 1); }
+.flow-map { cursor: grab; touch-action: none; }
+/* The diagram and the source's layers are drawn at their own size and moved
+   with a transform (#show in flow.js), composited so a pan only moves pixels. */
+.flow-svg, .flow-hole { position: absolute; left: 0; top: 0; overflow: visible; transform-origin: 0 0; will-change: transform; }
+/* The source's own layers, under and over the diagram (see #build in flow.js) */
+.flow-hole { pointer-events: none; }
+.flow-map.panning { cursor: grabbing; }
+.flow-map.selecting { cursor: crosshair; }
 .map-controls { position: absolute; top: 8px; right: 8px; display: flex; gap: 2px; padding: 3px; background: color-mix(in srgb, var(--panel-solid) 88%, transparent); border: 1px solid var(--border-soft); border-radius: 10px; box-shadow: var(--shadow); }
 .map-btn { min-width: 28px; height: 28px; padding: 0 6px; display: grid; place-items: center; border: 0; border-radius: 7px; background: none; color: var(--text); font: inherit; font-size: 1.05rem; line-height: 1; cursor: pointer; }
 .map-btn:hover { background: rgba(56, 189, 248, 0.16); }
@@ -444,21 +449,21 @@ body.popout-falls .flow-select { position: static; }
 .flow-svg .bed { stroke: rgba(56, 189, 248, 0.16); stroke-width: 9; }
 /* No blur filter on streams: with hundreds of them it was most of the cost
    of every frame. The wide, soft bed underneath is the glow. */
-.flow-svg .water { stroke: var(--water); stroke-width: 3; stroke-dasharray: 14 10; animation: flow 1.1s linear infinite; }
-.flow-svg .sparkle { stroke: var(--foam); stroke-width: 1.2; stroke-dasharray: 2 26; opacity: 0.85; animation: flow 0.7s linear infinite; }
-@keyframes flow { to { stroke-dashoffset: -24; } }
+/* Flowing water (and its foam) is drawn on the canvas (.flow-water, see
+   #drawWater in flow.js); the SVG only draws water that's dry or still. */
+.flow-svg .stream.flow .water { display: none; }
+.flow-water, .flow-marks { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.flow-streams { pointer-events: none; }
 /* Performance: nothing animates off screen, and the water stops with very
    many streams on screen (calm); zoomed out, details too small to read are
    not drawn. */
-.flow-svg .offscreen, .flow-svg .offscreen * { animation: none !important; }
-.flow-svg.calm .stream *, .flow-svg.calm .node * { animation: none !important; }
-.flow-svg.lod-far .sparkle, .flow-svg.lod-far .ring-ripple, .flow-svg.lod-far .sub, .flow-svg.lod-far .node-tags, .flow-svg.lod-far .multi, .flow-svg.lod-far .expand { display: none; }
+/* Culled (#cull in flow.js): streams go, cards keep only their outline */
+.flow-svg .stream.offscreen, .flow-svg .node.offscreen .node-inner > :not(.pool) { display: none; }
+.flow-svg.lod-far .sub, .flow-svg.lod-far .node-tags, .flow-svg.lod-far .multi, .flow-svg.lod-far .expand { display: none; }
 .flow-svg .stream.dry .bed { stroke: rgba(248, 113, 113, 0.12); }
-.flow-svg .stream.dry .water { stroke: rgba(248, 113, 113, 0.55); stroke-dasharray: 4 7; filter: none; animation: none; stroke-width: 2; }
-.flow-svg .stream.dry .sparkle,
-.flow-svg .stream.still .sparkle { display: none; }
+.flow-svg .stream.dry .water { stroke: rgba(248, 113, 113, 0.55); stroke-dasharray: 4 7; stroke-width: 2; }
 .flow-svg .stream.still .bed { stroke: rgba(100, 116, 139, 0.15); }
-.flow-svg .stream.still .water { stroke: rgba(100, 116, 139, 0.55); stroke-dasharray: none; filter: none; animation: none; stroke-width: 2; }
+.flow-svg .stream.still .water { stroke: rgba(100, 116, 139, 0.55); stroke-width: 2; }
 
 .flow-svg .node { cursor: pointer; }
 .flow-svg .node .pool { fill: var(--panel-solid); stroke: rgba(56, 189, 248, 0.35); stroke-width: 1.5; transition: stroke 0.2s; }
@@ -470,11 +475,9 @@ body.popout-falls .flow-select { position: static; }
 .flow-svg .node .dot { fill: var(--blocked); }
 .flow-svg .node-badge .ring { fill: #0a2238; stroke: var(--blocked); stroke-width: 2; transition: stroke 0.2s; }
 .flow-svg .node-badge.kind-image .ring { fill: #e8f2fb; }
-.flow-svg .node-badge .ring-ripple { fill: none; stroke: transparent; stroke-width: 2; }
 .flow-svg .icon-glyph { fill: none; stroke: var(--foam); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .flow-svg .node.up .dot { fill: var(--up); }
 .flow-svg .node.up .ring { stroke: var(--up); }
-.flow-svg .node.up .ring-ripple { stroke: var(--up); animation: ring-ripple 2.6s ease-out infinite; transform-box: fill-box; transform-origin: center; }
 .flow-svg .node.down .ring { stroke: var(--down); }
 .flow-svg .node.pending .ring { stroke: var(--pending); }
 .flow-svg .node.blocked .ring { stroke-dasharray: 4 3; }
@@ -483,7 +486,7 @@ body.popout-falls .flow-select { position: static; }
 .flow-svg .node.paused .node-badge > :not(circle) { opacity: 0.5; }
 .flow-svg .node.up .pool { stroke: rgba(45, 212, 191, 0.45); }
 .flow-svg .node.down .dot { fill: var(--down); }
-.flow-svg .node.down .pool { stroke: var(--down); fill: #2a1420; animation: alarm 1.6s ease-in-out infinite; }
+.flow-svg .node.down .pool { stroke: var(--down); fill: #2a1420; } /* pulses on the canvas */
 .flow-svg .node.down .sub { fill: #fecaca; }
 .flow-svg .node.pending .dot { fill: var(--pending); }
 .flow-svg .node.pending .pool { stroke: rgba(251, 191, 36, 0.6); }
@@ -533,15 +536,12 @@ body.popout-falls .flow-select { position: static; }
 .info-actions { display: flex; gap: 6px; flex-wrap: wrap; padding-top: 2px; }
 button.chip { font: inherit; font-size: 0.85rem; cursor: pointer; }
 
-.flow-svg .source { cursor: pointer; outline: none; }
-.flow-svg .source.focused .hole-rim, .flow-svg .viewport:has(.source:hover) .hole-rim { stroke: var(--foam); stroke-width: 5; }
-.flow-svg .source:focus-visible .hole-water { stroke: var(--foam); stroke-width: 5; }
-.flow-svg .hole-rim { fill: #153443; }
-.flow-svg .hole-water { fill: #03c1f5; }
-.flow-svg .hole-core { fill: #72e1f8; }
-@keyframes ring-ripple { from { transform: scale(1); opacity: 0.7; } to { transform: scale(1.5); opacity: 0; } }
-@keyframes ripple { from { transform: scale(1); opacity: 0.8; } to { transform: scale(2.6); opacity: 0; } }
-@keyframes alarm { 50% { stroke-width: 3; } }
+.flow-svg .source-hit { fill: transparent; cursor: pointer; outline: none; }
+.flow-hole .source.focused .hole-rim, .flow-hole.hover .hole-rim { stroke: var(--foam); stroke-width: 5; }
+.flow-hole.kbd .hole-water { stroke: var(--foam); stroke-width: 5; }
+.flow-hole .hole-rim { fill: #153443; }
+.flow-hole .hole-water { fill: #03c1f5; }
+.flow-hole .hole-core { fill: #72e1f8; }
 
 .empty { text-align: center; padding: 28px 12px; color: var(--muted); }
 .empty p { max-width: 460px; margin: 0 auto 14px; }
@@ -1059,17 +1059,16 @@ table.csv-columns { width: 100%; border-collapse: collapse; font-size: 0.82rem; 
 .sev-help { display: flex; flex-direction: column; gap: 1px; margin: 6px 0 0; }
 
 /* in the Falls: an up monitor with an open warning/severe problem pulses */
-.flow-svg .node.up.sev-warning .pool { stroke: var(--sev-warning); fill: #262109; animation: sev-pulse 1.8s ease-in-out infinite; }
-.flow-svg .node.up.sev-severe .pool { stroke: var(--sev-severe); fill: #2a1218; animation: sev-pulse 1.1s ease-in-out infinite; }
+.flow-svg .node.up.sev-warning .pool { stroke: var(--sev-warning); fill: #262109; } /* pulse on the canvas */
+.flow-svg .node.up.sev-severe .pool { stroke: var(--sev-severe); fill: #2a1218; }
 .flow-svg .node.up.sev-warning .sub { fill: #fde68a; }
 .flow-svg .node.up.sev-severe .sub { fill: #fecaca; }
-@keyframes sev-pulse { 50% { stroke-width: 4; stroke-opacity: 0.45; } }
 
 /* in the list */
 .sev-mark { display: inline-grid; place-items: center; width: 15px; height: 15px; flex-shrink: 0; border-radius: 50%; font-size: 0.66rem; font-weight: 800; color: var(--bg); background: var(--sev); animation: sev-mark 1.8s ease-in-out infinite; }
 .sev-mark.sev-severe { animation-duration: 1.1s; }
 @keyframes sev-mark { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--sev) 25%, transparent); } }
-@media (prefers-reduced-motion: reduce) { .sev-mark, .flow-svg .node.up.sev-warning .pool, .flow-svg .node.up.sev-severe .pool { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .sev-mark { animation: none; } }
 
 /* alert history */
 .card.alert.alert-problem { border-left: 3px solid var(--sev); }

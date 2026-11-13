@@ -77,8 +77,11 @@ export const TYPE_LABEL = {
   push: 'Push',
 };
 
+// One formatter for all: toLocaleString() with options builds a new one per
+// call, and the list formats a tooltip for every heartbeat it shows.
+const TIME_FORMAT = new Intl.DateTimeFormat([], { dateStyle: 'medium', timeStyle: 'short' });
 export function fmtTime(t) {
-  return t ? new Date(t).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+  return t ? TIME_FORMAT.format(t) : '—';
 }
 
 export function fmtAgo(t) {

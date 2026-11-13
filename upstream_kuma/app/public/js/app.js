@@ -240,8 +240,77 @@ function renderSummary() {
 let treeView = null; // filterView() for the current tree render
 
 function renderTree() {
-  drawTree();
+  const vis = filterView();
+  treeView = vis;
+  drawTreeTools();
+  // With hundreds of monitors, rebuilding every row on each poll froze the
+  // page for a moment every few seconds. When nothing that shapes the rows
+  // changed, only the rows whose status, heartbeats or highlight changed are
+  // touched.
+  const key = listKey(vis);
+  if (key === listShown.key && listShown.rows.length && $('#tree').contains(listShown.rows[0].el)) return refreshRows();
+  listShown = { key, rows: [], branches: [] };
+  drawTree(vis);
   fitBeats();
+  watchBranches();
+}
+
+// The rows drawn last (each with what it showed), and what they were drawn from.
+let listShown = { key: '', rows: [], branches: [] };
+
+function listKey(vis) {
+  const parts = [ui.search.trim().toLowerCase(), ui.flatList, ui.editMode, [...ui.collapsed].sort().join(','),
+    vis ? `${[...vis.show].join(',')}/${[...vis.match].join(',')}` : ''];
+  for (const m of state.monitors) {
+    parts.push(`${m.id}:${m.name}:${m.target}:${m.type}:${m.parents.join(',')}:${m.children.length}:${JSON.stringify(m.icon)}:${m.tags.join(',')}:${m.sev && m.sev !== 'info' ? m.sev : ''}`);
+  }
+  return parts.join('|');
+}
+
+function rowState(m) {
+  const active = ['monitor', 'snmp'].includes(ui.route?.name) ? ui.route.id === m.id : ui.route?.name === 'dashboard' && ui.info === m.id;
+  return `${m.status}|${m.beats.at(-1)?.[0]}|${m.uptime24}|${active}|${ui.selected.has(m.id)}|${treeView && !treeView.match.has(m.id)}|${m.issues?.map((i) => i.value).join()}`;
+}
+
+function refreshRows() {
+  for (const r of listShown.rows) {
+    const m = state.byId.get(r.id);
+    if (!m) continue;
+    const now = rowState(m);
+    if (now === r.state) continue;
+    r.state = now;
+    const active = now.split('|')[3] === 'true';
+    r.el.className = `row ${m.status}${active ? ' active' : ''}${ui.selected.has(m.id) ? ' selected' : ''}${treeView && !treeView.match.has(m.id) ? ' context' : ''}`;
+    for (const d of r.el.querySelectorAll('.dot')) {
+      d.className = `dot ${m.status}${d.classList.contains('meta-dot') ? ' meta-dot' : ''}`;
+      d.title = STATUS_LABEL[m.status];
+    }
+    r.el.querySelector('.beats')?.replaceWith(heartbeatBar(m.beats, 10, { compact: true }));
+    const pct = r.el.querySelector('.pct');
+    if (pct) pct.textContent = m.uptime24 == null ? '' : fmtPct(m.uptime24).replace('.00', '');
+    const meta = r.el.querySelector('.row-meta');
+    if (meta && m.type !== 'group') meta.title = m.uptime24 == null ? '' : `Uptime (24h): ${fmtPct(m.uptime24)}`;
+    const sev = r.el.querySelector('.sev-mark');
+    if (sev) sev.title = sevMark(m)?.title ?? '';
+  }
+  for (const b of listShown.branches) {
+    const m = state.byId.get(b.id);
+    const cls = m && streamClass(m);
+    if (!cls || cls === b.cls) continue;
+    b.el.classList.replace(b.cls, cls);
+    b.cls = cls;
+  }
+}
+
+// The list's streams only flow where you can see them: with hundreds of
+// monitors, the branches scrolled out of view animating cost a repaint of
+// the list every frame. (No root: the window, clipped by the list's scroll.)
+const branchSeen = new IntersectionObserver((entries) => {
+  for (const e of entries) e.target.classList.toggle('unseen', !e.isIntersecting);
+}, { rootMargin: '100px' });
+function watchBranches() {
+  branchSeen.disconnect();
+  for (const b of $('#tree').querySelectorAll('.branch:not(.root)')) branchSeen.observe(b);
 }
 
 // At full size the heartbeats come with the uptime %; narrower, they get
@@ -249,20 +318,27 @@ function renderTree() {
 // whatever fits the widest row. Rerun on every render and whenever the list
 // is resized.
 const BEAT_STEPS = ['full', '7', '4', 'dot'];
+let beatsFitted = '';
 function fitBeats() {
   const tree = $('#tree');
   if (!tree?.clientWidth) return;
+  // Measuring lays out every row, up to four times, and the poll redraws the
+  // list every few seconds; so only measure when something that sets the
+  // rows' widths changed (names, depth, what's in a row, the list's width).
+  const rows = [...tree.querySelectorAll('.row')].map((r) => {
+    const main = r.querySelector('.row-main');
+    return `${r.style.getPropertyValue('--depth')}:${main?.textContent}:${main?.getElementsByTagName('*').length}`;
+  });
+  const key = [tree.clientWidth, ui.editMode, ...rows].join('|');
+  if (key === beatsFitted && tree.dataset.beats) return;
+  beatsFitted = key;
   for (const step of BEAT_STEPS) {
     tree.dataset.beats = step;
     if (tree.scrollWidth <= tree.clientWidth) return;
   }
 }
 
-function drawTree() {
-  const host = $('#tree');
-  const q = ui.search.trim().toLowerCase();
-  const vis = filterView();
-  treeView = vis;
+function drawTreeTools() {
   renderTagFilter();
   renderTreeSelect();
   $('#tree-tools').classList.toggle('editing', ui.editMode);
@@ -272,6 +348,11 @@ function drawTree() {
   const valve = $('#flow-toggle');
   valve.setAttribute('aria-pressed', String(!ui.flatList));
   valve.title = ui.flatList ? 'Flat list: open the valve to show the hierarchy' : 'Hierarchy: close the valve for a flat, alphabetical list';
+}
+
+function drawTree(vis) {
+  const host = $('#tree');
+  const q = ui.search.trim().toLowerCase();
 
   if (!state.monitors.length) {
     fill(host, h('div', { class: 'tree-empty' },
@@ -454,9 +535,14 @@ function branch(m, parentId, path, depth) {
   const open = !ui.collapsed.has(path);
   return h('div', { class: 'node-wrap' },
     row(m, parentId, path, depth, kids.length > 0),
-    kids.length && open
-      ? h('div', { class: `branch ${streamClass(m)}` }, kids.map((k) => branch(k, m.id, `${path}/${k.id}`, depth + 1)))
-      : null);
+    kids.length && open ? branchOf(m, kids.map((k) => branch(k, m.id, `${path}/${k.id}`, depth + 1))) : null);
+}
+
+function branchOf(m, rows) {
+  const cls = streamClass(m);
+  const el = h('div', { class: `branch ${cls}` }, rows);
+  listShown.branches.push({ el, id: m.id, cls });
+  return el;
 }
 
 function row(m, parentId, path, depth, hasKids) {
@@ -566,6 +652,7 @@ function row(m, parentId, path, depth, hasKids) {
         h('span', { class: `dot meta-dot ${m.status}`, title: STATUS_LABEL[m.status] }),
       ]));
   el.style.setProperty('--depth', depth);
+  listShown.rows.push({ el, id: m.id, state: rowState(m) });
   return el;
 }
 

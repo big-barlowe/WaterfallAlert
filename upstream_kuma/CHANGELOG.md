@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.17.2
+
+- **The Falls flows at every zoom**, however many monitors are on screen. Before, the water stopped once more than 300 streams were in view.
+- **A much lighter Falls, stress-tested to over 4,000 monitors.** On 413 monitors the browser does a third to a half of the work it did; with 2,000 it stays at 60 frames a second, panning and zooming, and with 4,000 close to it. What moves (the water and foam, drawn on the GPU, and the ripples and pulses) is drawn on canvases instead of in the diagram, and the diagram is moved as one picture rather than redrawn on every frame of a pan. Streams and cards out of view aren't drawn at all (cards keep an outline, so you can still Tab to them), and the warbling source is drawn on its own.
+- **Fit** and bringing a monitor into view glide with everything in step.
+- **The list keeps up**: with hundreds of monitors, the update every few seconds rebuilt every row and froze the page for a moment; now only the rows that changed are touched. Formatting thousands of heartbeat tooltips is faster too, and the list's streams only flow where it's scrolled to.
+- Browsers without WebGL2 draw the water on a regular canvas, as before.
+
 ## 0.17.1
 
 - **On a monitor's full page, clicking another monitor in the list opens its full page** (as before 0.17.0), instead of jumping to the Falls. Elsewhere, a click still traces it in the Falls with its details open.

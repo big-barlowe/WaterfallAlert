@@ -17,16 +17,16 @@ const ZOOM = { min: 0.2, max: 2.5, step: 1.25 };
 const FIT_MIN = 0.6; // fitting never shrinks below this; zoom out for the overview
 const VIEW_MIN_H = 320;
 const MAP_H = { min: 200, max: 4000 }; // dragged heights
-// Zoomed out below `details`, the small text, tags and sparkles are left out
-// (names stay). With more than `animate` streams on screen the water stops
-// moving: hundreds of animated streams cost more than they show.
-const LOD = { details: 0.3, animate: 300 };
+// Zoomed out below `details`, the small text, tags, foam and ripples are left
+// out (names stay). The water keeps flowing at every zoom.
+const LOD = { details: 0.3 };
 // Downstream of a traced monitor: each step away is this much smaller.
 const SHRINK = { step: 0.9, min: 0.65 };
 const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
-const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+const MOTION = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null; // asked every frame
+const reducedMotion = () => Boolean(MOTION?.matches);
 
 // Everything upstream and downstream of `id`, each with its distance in hops.
 export function lineage(monitors, id) {
@@ -520,18 +520,21 @@ function sourceHole(x, y, focused) {
   const warble = (frames, dur) => (STILL ? null : svg('animate', { attributeName: 'd', values: frames, dur, repeatCount: 'indefinite' }));
   const at = { transform: `translate(${x - cx * s} ${y - cy * s}) scale(${s})` };
   // The rim goes under the streams and the water over them, so the streams
-  // seem to come out of the water.
+  // seem to come out of the water. Both are drawn in small SVGs of their own
+  // (see #build); `hit`, an invisible circle in the diagram, takes the clicks.
   return {
-    under: svg('g', { class: `source source-rim${focused ? ' focused' : ''}`, ...at }, svg('path', { class: 'hole-rim', d: HOLE.rim }, warble(holeFrames.rim, '7s'))),
-    over: svg('g', {
-      class: `source${focused ? ' focused' : ''}`,
-      ...at,
+    hit: svg('circle', {
+      class: 'source-hit',
+      cx: x,
+      cy: y,
+      r: 36,
       tabindex: 0,
       role: 'button',
       'aria-pressed': String(Boolean(focused)),
       'aria-label': focused ? 'Upstream Kuma, traced. Activate to show everything.' : 'Trace everything from the source, smaller the further downstream',
-    },
-      svg('title', {}, focused ? 'Show everything' : 'Trace from the source'),
+    }, svg('title', {}, focused ? 'Show everything' : 'Trace from the source')),
+    under: svg('g', { class: `source source-rim${focused ? ' focused' : ''}`, ...at }, svg('path', { class: 'hole-rim', d: HOLE.rim }, warble(holeFrames.rim, '7s'))),
+    over: svg('g', { class: `source${focused ? ' focused' : ''}`, ...at },
       svg('path', { class: 'hole-water', d: HOLE.water }, warble(holeFrames.water, '5s')),
       svg('path', { class: 'hole-core', d: HOLE.core })),
   };
@@ -581,6 +584,8 @@ export class FlowView {
     this.expanded = false;
     this.resizer = new ResizeObserver(() => {
       if (!container.isConnected) return this.resizer.disconnect();
+      // the canvases' size, so drawing never has to ask (and force a layout)
+      this.mapSize = [container.clientWidth, container.clientHeight];
       // Normally the map sets its own height; only popped out does it follow the box.
       const H = this.expanded ? container.clientHeight : 0;
       if (container.clientWidth === this.width && H === this.height) return;
@@ -592,6 +597,40 @@ export class FlowView {
       this.#apply(false);
     });
     this.resizer.observe(container);
+    // Everything that moves is drawn on this canvas (#drawWater), over the
+    // diagram, which then only repaints when the view or a status changes.
+    this.canvas = h('canvas', { class: 'flow-water', 'aria-hidden': 'true' });
+    this.marks = h('canvas', { class: 'flow-marks', 'aria-hidden': 'true' });
+    // The GPU can drop the water's context (sleep, a driver reset); set it up
+    // again when it comes back.
+    this.canvas.addEventListener('webglcontextlost', (e) => e.preventDefault());
+    this.canvas.addEventListener('webglcontextrestored', () => {
+      this.gl = undefined;
+      this.dirty = true;
+    });
+    this.inView = true;
+    this.seen = new IntersectionObserver(([e]) => { this.inView = e.isIntersecting; });
+    this.seen.observe(container);
+    // Pointer events are on the map itself, which stays put (the diagram moves
+    // inside it); not on its buttons.
+    const onMap = (fn) => (e) => {
+      if (!e.target.closest('.map-controls, .map-hint')) fn(e);
+    };
+    container.addEventListener('pointerdown', onMap((e) => this.#down(e)));
+    container.addEventListener('pointermove', (e) => this.#move(e));
+    container.addEventListener('pointerup', (e) => this.#up(e));
+    container.addEventListener('pointercancel', (e) => this.#up(e));
+    container.addEventListener('wheel', (e) => this.#wheel(e), { passive: false });
+    container.addEventListener('click', onMap((e) => {
+      if (this.#swallowClick() || !this.svgEl) return;
+      if (e.target.closest('.source-hit') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !this.selectMode) this.onSelect(SOURCE);
+      else if (!e.target.closest('.node')) this.onClear();
+    }));
+    // Tabbing to a node that is off screen brings it into view.
+    container.addEventListener('focusin', (e) => {
+      const node = e.target.closest?.('.node');
+      if (node?.matches(':focus-visible')) this.#reveal([...this.nodeEls].find(([, n]) => n.g === node)?.[0]);
+    });
   }
 
   // A height chosen by dragging (null: back to sizing itself to the diagram).
@@ -666,7 +705,8 @@ export class FlowView {
 
   #build(monitors, key, focus, rel) {
     // Where each node is on screen now, so moved nodes can glide over.
-    const before = new Map([...this.nodeEls].map(([id, n]) => [id, n.pool.getBoundingClientRect()]));
+    // (Culled nodes have no position on screen; they fade in instead.)
+    const before = new Map([...this.nodeEls].filter(([, n]) => !n.off).map(([id, n]) => [id, n.pool.getBoundingClientRect()]));
 
     this.topology = key;
     const nodeH = monitors.some((m) => m.tagList?.length) ? TAGGED_H : NODE_H;
@@ -684,13 +724,14 @@ export class FlowView {
     this.edgeEls = [];
     this.nodeEls = new Map();
 
+    // A stream's bed, and its water when it's dry or still; flowing water
+    // and foam are drawn on the canvas from `path`.
     const addEdge = (parentId, childId, d) => {
       const g = svg('g', { class: 'stream' },
         svg('path', { class: 'bed', d }),
-        svg('path', { class: 'water', d }),
-        svg('path', { class: 'sparkle', d }));
+        svg('path', { class: 'water', d }));
       edges.append(g);
-      this.edgeEls.push({ parentId, childId, g });
+      this.edgeEls.push({ parentId, childId, g, d, path: new Path2D(d) });
     };
 
     for (const m of monitors) {
@@ -736,7 +777,6 @@ export class FlowView {
         svg('rect', { class: 'sel-ring', x: -4, y: -4, width: NODE_W + 8, height: nodeH + 8, rx: 18 }),
         pool,
         svg('g', { class: `node-badge${m.icon ? ` kind-${m.icon.kind}` : ''}` },
-          svg('circle', { class: 'ring-ripple', cx: BADGE.cx, cy: BADGE.cy, r: BADGE.r }),
           svg('circle', { class: 'ring', cx: BADGE.cx, cy: BADGE.cy, r: BADGE.r }),
           iconSvg(m.icon, BADGE.cx, BADGE.cy, 18) ?? svg('circle', { class: 'dot', cx: BADGE.cx, cy: BADGE.cy, r: 5 })),
         svg('text', { class: 'name', x: TEXT_X, y: 24 }, truncate(m.name, 17)),
@@ -772,37 +812,51 @@ export class FlowView {
     }
 
     const hole = sourceHole(srcX, srcY, focus === SOURCE);
-    hole.over.addEventListener('keydown', (e) => {
+    hole.hit.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ') return;
       e.preventDefault();
       this.onSelect(SOURCE);
     });
+    // The warbling hole changes shape every frame. Inside the diagram that
+    // made the browser repaint every card each frame, so it's drawn in two
+    // small SVGs of its own, one under the diagram and one over it, moved
+    // with the same transform (#apply).
+    this.holeLayers = [hole.under, hole.over].map((g, i) => svg('svg', { class: `flow-hole${i ? ' over' : ''}`, 'aria-hidden': 'true' }, svg('g', { class: 'hole-view' }, g)));
+    this.sourceBox = { x: srcX - 40, y: srcY - 40, w: 80, h: 80 };
+    // Hover and keyboard focus on the hit area light up the hole. (Classes,
+    // not CSS :has(): that re-checked the whole map every frame.)
+    const mark = (cls, on) => this.holeLayers.forEach((l) => l.classList.toggle(cls, on));
+    hole.hit.addEventListener('pointerenter', () => mark('hover', true));
+    hole.hit.addEventListener('pointerleave', () => mark('hover', false));
+    hole.hit.addEventListener('focus', () => mark('kbd', hole.hit.matches(':focus-visible')));
+    hole.hit.addEventListener('blur', () => mark('kbd', false));
 
-    this.viewEl = svg('g', { class: 'viewport' }, hole.under, edges, nodes, hole.over);
+    // Streams and cards are two SVGs, so the water's canvas can go between
+    // them (under the cards). Both move together (#show).
+    this.viewEl = svg('g', { class: 'viewport' }, nodes, hole.hit);
+    this.streamsEl = svg('svg', { class: 'flow-svg flow-streams', width, height, 'aria-hidden': 'true' }, edges);
+    if (this.gl) this.gl.key = null; // new streams
+    // The diagram is drawn at its own size and moved as a whole (#show), so
+    // the browser slides the pixels it already has instead of redrawing
+    // every card on every frame of a pan. Pointer events are on the map.
+    for (const l of this.holeLayers) {
+      l.setAttribute('width', width);
+      l.setAttribute('height', height);
+    }
     const root = svg('svg', {
       class: `flow-svg layout-${this.mode}${focus != null ? ' focusing' : ''}`,
+      width,
+      height,
       role: 'group',
       'aria-label': 'Monitor hierarchy flow diagram. Drag to move around; hold Ctrl or ⌘ and scroll, or pinch, to zoom.',
-      onclick: (e) => {
-        if (this.#swallowClick()) return;
-        if (e.target.closest('.source') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !this.selectMode) this.onSelect(SOURCE);
-        else if (!e.target.closest('.node')) this.onClear();
-      },
-      onpointerdown: (e) => this.#down(e),
-      onpointermove: (e) => this.#move(e),
-      onpointerup: (e) => this.#up(e),
-      onpointercancel: (e) => this.#up(e),
-      // Tabbing to a node that is off screen brings it into view.
-      onfocusin: (e) => {
-        const node = e.target.closest('.node');
-        if (node?.matches(':focus-visible')) this.#reveal([...this.nodeEls].find(([, n]) => n.g === node)?.[0]);
-      },
     },
     svg('defs', {},
       glowFilter('glow-box', { x: '-50%', y: '-50%', width: '200%', height: '200%' })),
     this.viewEl);
-    root.addEventListener('wheel', (e) => this.#wheel(e), { passive: false });
-    fill(this.container, root, this.controls, this.hint);
+    this.holeOff = undefined;
+    fill(this.container, this.holeLayers[0], this.streamsEl, this.canvas, root, this.marks, this.holeLayers[1], this.controls, this.hint);
+    this.dirty = true;
+    this.#startWater();
     // Each stream's extent, so the ones off screen can stop animating.
     for (const e of this.edgeEls) {
       const b = e.g.getBBox();
@@ -878,44 +932,85 @@ export class FlowView {
     this.svgEl.classList.toggle('lod-far', v.k < LOD.details);
     this.#scheduleCull();
     if (!this.expanded) this.container.style.height = `${v.h}px`;
-    const glide = animate && !reducedMotion();
-    this.viewEl.classList.toggle('glide', glide);
-    clearTimeout(this.glideTimer);
-    if (glide) this.glideTimer = setTimeout(() => this.viewEl?.classList.remove('glide'), 320);
-    this.viewEl.style.transform = `translate(${v.x}px, ${v.y}px) scale(${v.k})`;
-    this.zoomLabel.textContent = `${Math.round(v.k * 100)}%`;
+    // A glide (Fit, bringing a monitor into view) runs in the canvas's frame
+    // loop (#tick), so the diagram, the hole and the water move together; a
+    // CSS transition ran a frame or two apart from the canvas.
+    const to = { k: v.k, x: v.x, y: v.y };
+    if (animate && !reducedMotion() && this.inView && this.shown) {
+      this.glide = { from: this.shown, to, t0: performance.now() };
+      this.#show(this.shown); // (a rebuilt diagram starts where the old one was)
+    } else {
+      this.glide = null;
+      this.#show(to);
+    }
+    const zoom = `${Math.round(v.k * 100)}%`;
+    if (this.zoomLabel.textContent !== zoom) this.zoomLabel.textContent = zoom; // (a rewrite every move costs a layout)
+    if (reducedMotion()) this.#drawWater(0); // otherwise the next frame does
   }
 
-  // Only what is on screen (plus a margin) animates; checked a few times a
-  // second while the view moves.
+  // Where the diagram is drawn right now (the view, or part-way to it). The
+  // layers are composited (will-change), so a pan only moves pixels; the
+  // browser draws them again at a new zoom by itself.
+  #show(p) {
+    this.shown = p;
+    const transform = `translate(${p.x}px, ${p.y}px) scale(${p.k})`;
+    for (const el of this.#layers()) el.style.transform = transform;
+  }
+
+  #layers() {
+    return [this.streamsEl, this.svgEl, ...(this.holeLayers ?? [])].filter(Boolean);
+  }
+
+
+  #glideStep(now) {
+    const { from, to, t0 } = this.glide;
+    const u = Math.min(1, (now - t0) / 300);
+    const e = 1 - (1 - u) ** 3; // ease-out
+    this.#show({ k: from.k + (to.k - from.k) * e, x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e });
+    if (u === 1) this.glide = null;
+  }
+
+  // Only what is on screen (plus a margin) is drawn and animates; checked a
+  // few times a second while the view moves. Off screen, streams aren't drawn
+  // at all and cards only as an outline (so they can still be tabbed to):
+  // anything moving in the diagram makes the browser repaint everything that
+  // is drawn, so that is kept to what you can see.
   #scheduleCull() {
     if (this.cullTimer) return;
     this.cullTimer = setTimeout(() => {
       this.cullTimer = null;
       this.#cull();
-    }, 120);
+    }, 100);
   }
 
   #cull() {
     const v = this.view;
     if (!this.svgEl?.isConnected || !this.edgeEls) return;
-    const m = 80 / v.k;
+    const m = 240 / v.k; // room for a fast pan between two checks
     const x0 = -v.x / v.k - m;
     const y0 = -v.y / v.k - m;
     const x1 = x0 + this.container.clientWidth / v.k + 2 * m;
     const y1 = y0 + v.h / v.k + 2 * m;
     const out = (b) => b.x > x1 || b.y > y1 || b.x + b.w < x0 || b.y + b.h < y0;
-    let shown = 0;
+    let changed = false;
     for (const e of this.edgeEls) {
       const off = !e.box || out(e.box);
-      if (!off) shown++;
-      if (off !== e.off) e.g.classList.toggle('offscreen', (e.off = off));
+      if (off === e.off) continue;
+      e.g.classList.toggle('offscreen', (e.off = off));
+      changed = true;
     }
-    this.svgEl.classList.toggle('calm', shown > LOD.animate);
+    const holeOff = !this.sourceBox || out(this.sourceBox);
+    if (holeOff !== this.holeOff) {
+      this.holeOff = holeOff;
+      for (const l of this.holeLayers ?? []) holeOff ? l.pauseAnimations() : l.unpauseAnimations();
+    }
     for (const [id, n] of this.nodeEls) {
       const off = out(this.boxes.get(id));
-      if (off !== n.off) n.g.classList.toggle('offscreen', (n.off = off));
+      if (off === n.off) continue;
+      n.g.classList.toggle('offscreen', (n.off = off));
+      changed = true;
     }
+    if (changed) this.#waterChanged();
   }
 
   // Zoom by `factor` keeping the point (sx, sy) of the diagram where it is.
@@ -959,7 +1054,7 @@ export class FlowView {
     }
     e.preventDefault();
     const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-    const r = this.svgEl.getBoundingClientRect();
+    const r = this.#origin();
     this.#zoomAt(Math.exp(-dy * (Math.abs(dy) < 40 ? 0.012 : 0.002)), e.clientX - r.left, e.clientY - r.top, false);
   }
 
@@ -976,9 +1071,15 @@ export class FlowView {
     return s;
   }
 
+  // The map's top-left corner inside its border, in client coordinates.
+  #origin() {
+    const r = this.container.getBoundingClientRect();
+    return { left: r.left + this.container.clientLeft, top: r.top + this.container.clientTop };
+  }
+
   // Diagram coordinates of a pointer.
   #point(e) {
-    const r = this.svgEl.getBoundingClientRect();
+    const r = this.#origin();
     const v = this.view;
     return { x: (e.clientX - r.left - v.x) / v.k, y: (e.clientY - r.top - v.y) / v.k };
   }
@@ -991,9 +1092,9 @@ export class FlowView {
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (this.pointers.size === 2) {
       this.#endMarquee();
-      this.svgEl.classList.remove('panning');
+      this.container.classList.remove('panning');
       const [a, b] = [...this.pointers.values()];
-      const r = this.svgEl.getBoundingClientRect();
+      const r = this.#origin();
       this.gesture = {
         type: 'pinch',
         d: Math.hypot(a.x - b.x, a.y - b.y) || 1,
@@ -1033,7 +1134,7 @@ export class FlowView {
     if (!g) return;
     if (g.type === 'pinch') {
       const [a, b] = [...this.pointers.values()];
-      const r = this.svgEl.getBoundingClientRect();
+      const r = this.#origin();
       const mx = (a.x + b.x) / 2 - r.left;
       const my = (a.y + b.y) / 2 - r.top;
       const k = clamp(g.view.k * Math.hypot(a.x - b.x, a.y - b.y) / g.d, ZOOM.min, ZOOM.max);
@@ -1047,7 +1148,7 @@ export class FlowView {
       if (Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < g.threshold) return;
       g.active = true;
       this.#capture(e.pointerId); // keep the drag going outside the diagram
-      if (g.type === 'pan') this.svgEl.classList.add('panning');
+      if (g.type === 'pan') this.container.classList.add('panning');
       else {
         g.rect = svg('rect', { class: 'marquee', rx: 4 });
         this.viewEl.append(g.rect);
@@ -1084,7 +1185,7 @@ export class FlowView {
     }
     if (e.pointerId !== g.id) return;
     this.gesture = null;
-    this.svgEl.classList.remove('panning');
+    this.container.classList.remove('panning');
     if (!g.active) return;
     this.suppressClick = e.type === 'pointerup';
     if (g.type === 'marquee') {
@@ -1102,7 +1203,7 @@ export class FlowView {
 
   #capture(pointerId) {
     try {
-      this.svgEl.setPointerCapture(pointerId);
+      this.container.setPointerCapture(pointerId);
     } catch {
       // pointer already gone
     }
@@ -1128,27 +1229,384 @@ export class FlowView {
       n.inner.animate([{ transform: `translate(${dx}px, ${dy}px) scale(${r})` }, { transform: 'none' }],
         { duration: 520, easing: 'cubic-bezier(.2,.75,.25,1)' });
     }
-    edges.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 320, delay: 380, easing: 'ease-out', fill: 'backwards' });
+    for (const el of [edges, this.canvas, this.marks]) el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 320, delay: 380, easing: 'ease-out', fill: 'backwards' });
   }
 
   // Update colours and text in place so the flow animation never restarts.
   #paint(monitors) {
     const byId = new Map(monitors.map((m) => [m.id, m]));
-    for (const { parentId, childId, g, off } of this.edgeEls) {
-      const state = parentId == null ? 'flow' : streamState(byId.get(parentId));
-      const child = byId.get(childId);
-      g.setAttribute('class', `stream ${state} to-${child?.status}${off ? ' offscreen' : ''}`);
+    for (const e of this.edgeEls) {
+      const state = e.parentId == null ? 'flow' : streamState(byId.get(e.parentId));
+      const child = byId.get(e.childId);
+      e.state = state;
+      e.g.setAttribute('class', `stream ${state} to-${child?.status}${e.off ? ' offscreen' : ''}`);
     }
-    this.svgEl?.classList.toggle('selecting', this.selectMode);
-    for (const [id, { g, title, sub, role, tags, off }] of this.nodeEls) {
+    this.container.classList.toggle('selecting', this.selectMode);
+    for (const [id, n] of this.nodeEls) {
+      const { g, title, sub, role, tags, off } = n;
       const m = byId.get(id);
       if (!m) continue;
       const sel = this.selected.has(id) ? ' selected' : '';
       const sev = m.sev && m.sev !== 'info' ? ` sev-${m.sev}` : '';
+      Object.assign(n, { status: m.status, sev: m.status === 'up' && sev ? m.sev : null, context: Boolean(m.context), selected: Boolean(sel) });
       g.setAttribute('class', `node ${m.status} type-${m.type}${role}${sel}${sev}${m.context ? ' context' : ''}${off ? ' offscreen' : ''}`);
       sub.textContent = subline(m);
       const issues = (m.issues ?? []).map((i) => `\n⚠ ${i.name}${i.value ? `: ${i.value}` : ''}`).join('');
       title.textContent = `${m.name} — ${STATUS_LABEL[m.status]}${m.msg ? `\n${m.msg}` : ''}${issues}${tags.length ? `\nTags: ${tags.map((t) => t.name).join(', ')}` : ''}`;
     }
+    this.#waterChanged();
   }
+
+  // ---- the canvases: flowing water, foam, ripples and pulses ----------------
+  //
+  // Nothing in the SVGs animates (anything that did made the browser repaint
+  // all of them every frame). What moves is drawn on two canvases, with the
+  // sizes and speeds the old CSS animations had: the water and foam on
+  // `canvas`, between the streams' SVG and the cards' (so it runs under the
+  // cards, and shows through faded ones), and the ripple on up cards and the
+  // pulse on down and warning/severe cards on `marks`, over the cards.
+  //
+  // The water is drawn with WebGL (WaterGL): every stream is a strip of
+  // triangles that knows how far along its stream each point is, and a shader
+  // works out from that and the time whether a pixel is in a dash. Drawing
+  // thousands of dashed curves on a 2D canvas made the browser cut every one
+  // into dashes again on every frame; this is one draw call. Without WebGL2,
+  // the 2D canvas does it the slow way.
+
+  #waterChanged() {
+    this.dirty = true;
+    if (reducedMotion()) this.#drawWater(0);
+  }
+
+  #startWater() {
+    if (reducedMotion()) return this.#drawWater(0);
+    if (this.waterLoop) return;
+    const tick = (t) => {
+      if (!this.container.isConnected) {
+        this.waterLoop = null;
+        return this.seen.disconnect();
+      }
+      this.waterLoop = requestAnimationFrame(tick);
+      if (this.glide) this.#glideStep(t);
+      if (this.inView) this.#drawWater(t);
+    };
+    this.waterLoop = requestAnimationFrame(tick);
+  }
+
+  // What to draw: the flowing streams (all of them for WebGL, which costs
+  // nothing off screen; the ones in view for the 2D canvas) and, for the cards
+  // in view, ripples and pulses.
+  #collectWater() {
+    this.dirty = false;
+    this.ink ??= Object.fromEntries(['water', 'foam', 'up', 'down', 'sev-warning', 'sev-severe']
+      .map((k) => [k, getComputedStyle(document.documentElement).getPropertyValue(`--${k}`).trim()]));
+    const flowing = (this.edgeEls ?? []).filter((e) => e.state === 'flow');
+    if (this.gl) this.gl.streams(flowing, this.edgeEls);
+    else {
+      this.water2d = new Path2D();
+      for (const e of flowing) if (!e.off) this.water2d.addPath(e.path);
+    }
+    const ripples = new Map(); // scale → [x, y] badge centres
+    const pulses = [];
+    for (const [id, n] of this.nodeEls) {
+      const b = this.boxes.get(id);
+      if (n.off || !b || !n.status) continue;
+      const s = n.s;
+      if (n.status === 'up' && !n.context) {
+        if (!ripples.has(s)) ripples.set(s, []);
+        ripples.get(s).push([b.x + BADGE.cx * s, b.y + BADGE.cy * s]);
+      }
+      const pulse = n.status === 'down' ? PULSE.down : n.sev ? PULSE[n.sev] : null;
+      if (pulse) pulses.push({ ...pulse, b, s });
+    }
+    this.drawn = { ripples, pulses };
+  }
+
+  // Sizes a canvas to the map; true when it changed.
+  #fit2(c, dpr) {
+    const [cw, ch] = this.mapSize ?? [this.container.clientWidth, this.container.clientHeight];
+    const w = Math.round(cw * dpr);
+    const h = Math.round(ch * dpr);
+    if (c.width === w && c.height === h) return false;
+    c.width = w;
+    c.height = h;
+    return true;
+  }
+
+  #drawWater(t) {
+    const c = this.canvas;
+    if (!c?.isConnected) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (this.gl === undefined) this.gl = WaterGL.create(c); // null: no WebGL2
+    this.#fit2(c, dpr);
+    if (this.dirty) this.#collectWater();
+    const { k, x, y } = this.shown ?? this.view;
+    const still = reducedMotion();
+    const near = k >= LOD.details;
+    const ink = this.ink;
+    const water = { width: 3, period: 24, on: 14, offset: still ? 0 : -24 * ((t / 1100) % 1), color: ink.water, alpha: 1 };
+    const foam = { width: 1.2, period: 28, on: 2, offset: still ? 0 : -24 * ((t / 700) % 1), color: ink.foam, alpha: 0.85 };
+    if (this.gl) this.gl.draw({ k, x, y, dpr, w: c.width, h: c.height }, near ? [water, foam] : [water]);
+    else {
+      const ctx = c.getContext('2d');
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * x, dpr * y);
+      ctx.lineCap = 'round';
+      for (const d of near ? [water, foam] : [water]) {
+        ctx.globalAlpha = d.alpha;
+        ctx.lineWidth = d.width;
+        ctx.strokeStyle = d.color;
+        ctx.setLineDash([d.on, d.period - d.on]);
+        ctx.lineDashOffset = d.offset;
+        ctx.stroke(this.water2d);
+      }
+      ctx.globalAlpha = 1;
+    }
+    this.#drawMarks(t, { k, x, y, dpr, near, still });
+  }
+
+  // Ripples (up cards: ease-out, ×1 → ×1.5, 0.7 → 0 over 2.6s) and pulses
+  // (down and warning/severe cards: the outline thickens and back).
+  #drawMarks(t, { k, x, y, dpr, near, still }) {
+    const c = this.marks;
+    const { ripples, pulses } = this.drawn;
+    const any = !still && ((near && ripples.size) || pulses.length);
+    const resized = this.#fit2(c, dpr);
+    if (!any && !this.marksDrawn && !resized) return; // nothing there, nothing to clear
+    const ctx = c.getContext('2d');
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, c.width, c.height);
+    this.marksDrawn = any;
+    if (!any) return;
+    ctx.setTransform(dpr * k, 0, 0, dpr * k, dpr * x, dpr * y);
+    const ink = this.ink;
+    if (near) {
+      const p = 1 - (1 - (t / 2600) % 1) ** 2;
+      ctx.globalAlpha = 0.7 * (1 - p);
+      ctx.strokeStyle = ink.up;
+      for (const [s, at] of ripples) {
+        const r = BADGE.r * s * (1 + 0.5 * p);
+        ctx.lineWidth = 2 * s;
+        ctx.beginPath();
+        for (const [cx, cy] of at) {
+          ctx.moveTo(cx + r, cy);
+          ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+        }
+        ctx.stroke();
+      }
+    }
+    for (const { color, period, width, alpha, b, s } of pulses) {
+      const q = 0.5 - 0.5 * Math.cos((2 * Math.PI * t) / period);
+      ctx.globalAlpha = 1 - (1 - alpha) * q;
+      ctx.strokeStyle = ink[color];
+      ctx.lineWidth = (1.5 + (width - 1.5) * q) * s;
+      ctx.beginPath();
+      ctx.roundRect(b.x, b.y, b.w, b.h, 14 * s);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+// The old CSS pulses: alarm (down) 1.6s to 3px; sev-pulse to 4px at 45%.
+const PULSE = {
+  down: { color: 'down', period: 1600, width: 3, alpha: 1 },
+  warning: { color: 'sev-warning', period: 1800, width: 4, alpha: 0.45 },
+  severe: { color: 'sev-severe', period: 1100, width: 4, alpha: 0.45 },
+};
+
+// A stream's path ("M x,y L x,y …" in rings, "M x,y C …" in the tree) as
+// points, finely enough that a 3px line along them looks smooth.
+function pathPoints(d) {
+  const n = d.match(/-?\d*\.?\d+(?:e-?\d+)?/g).map(Number);
+  const cmds = d.match(/[MLC]/g);
+  const pts = [];
+  let j = 0;
+  for (const c of cmds) {
+    if (c !== 'C') {
+      pts.push([n[j], n[j + 1]]);
+      j += 2;
+      continue;
+    }
+    const [x0, y0] = pts[pts.length - 1];
+    const [x1, y1, x2, y2, x3, y3] = n.slice(j, j + 6);
+    j += 6;
+    const len = Math.hypot(x1 - x0, y1 - y0) + Math.hypot(x2 - x1, y2 - y1) + Math.hypot(x3 - x2, y3 - y2);
+    const steps = Math.max(4, Math.min(48, Math.ceil(len / 8)));
+    for (let i = 1; i <= steps; i++) {
+      const u = i / steps;
+      const v = 1 - u;
+      pts.push([v * v * v * x0 + 3 * v * v * u * x1 + 3 * v * u * u * x2 + u * u * u * x3, v * v * v * y0 + 3 * v * v * u * y1 + 3 * v * u * u * y2 + u * u * u * y3]);
+    }
+  }
+  return pts;
+}
+
+// The water on the GPU. Each stream is a strip of triangles along its points;
+// every vertex carries how far along the stream it is (s) and which side of
+// the line it's on, and the fragment shader draws a dash (with round ends,
+// like a 2D canvas) wherever (s + offset) falls in the "on" part of the
+// pattern. Moving the offset over time makes every stream flow at once.
+class WaterGL {
+  static create(canvas) {
+    const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, antialias: false, alpha: true });
+    if (!gl) return null;
+    const compile = (type, src) => {
+      const sh = gl.createShader(type);
+      gl.shaderSource(sh, src);
+      gl.compileShader(sh);
+      if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+      return sh;
+    };
+    try {
+      const prog = gl.createProgram();
+      gl.attachShader(prog, compile(gl.VERTEX_SHADER, WATER_VS));
+      gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, WATER_FS));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+      return new WaterGL(gl, prog);
+    } catch (err) {
+      console.warn('Water falls back to a 2D canvas:', err);
+      return null;
+    }
+  }
+
+  constructor(gl, prog) {
+    this.gl = gl;
+    this.prog = prog;
+    this.vbo = gl.createBuffer();
+    this.ibo = gl.createBuffer();
+    this.vao = gl.createVertexArray();
+    this.count = 0;
+    this.key = null;
+    this.u = Object.fromEntries(['u_view', 'u_size', 'u_hw', 'u_dpr', 'u_offset', 'u_period', 'u_on', 'u_color']
+      .map((name) => [name, gl.getUniformLocation(prog, name)]));
+    gl.bindVertexArray(this.vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.ibo);
+    // x, y, normal x, normal y, s, side
+    const at = (name, size, offset) => {
+      const loc = gl.getAttribLocation(prog, name);
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 24, offset);
+    };
+    at('a_pos', 2, 0);
+    at('a_nrm', 2, 8);
+    at('a_s', 1, 16);
+    at('a_side', 1, 20);
+    gl.bindVertexArray(null);
+  }
+
+  // Uploads the flowing streams, when they changed.
+  streams(flowing, all) {
+    const key = flowing.length === all.length ? `all${all.length}` : flowing.map((e) => all.indexOf(e)).join(',');
+    if (key === this.key) return;
+    this.key = key;
+    let nv = 0;
+    let ni = 0;
+    for (const e of flowing) {
+      e.pts ??= pathPoints(e.d);
+      nv += e.pts.length * 2;
+      ni += (e.pts.length - 1) * 6;
+    }
+    const v = new Float32Array(nv * 6);
+    const idx = new Uint32Array(ni);
+    let vi = 0;
+    let ii = 0;
+    for (const e of flowing) {
+      const p = e.pts;
+      const base = vi / 6;
+      let s = 0;
+      for (let i = 0; i < p.length; i++) {
+        if (i) s += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
+        // the normal: averaged over the two segments meeting here
+        const a = p[Math.max(0, i - 1)];
+        const b = p[Math.min(p.length - 1, i + 1)];
+        let nx = a[1] - b[1];
+        let ny = b[0] - a[0];
+        const l = Math.hypot(nx, ny) || 1;
+        nx /= l;
+        ny /= l;
+        for (const side of [-1, 1]) {
+          v.set([p[i][0], p[i][1], nx, ny, s, side], vi);
+          vi += 6;
+        }
+        if (i) {
+          const q = base + (i - 1) * 2;
+          idx.set([q, q + 1, q + 2, q + 1, q + 3, q + 2], ii);
+          ii += 6;
+        }
+      }
+    }
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, v, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.ibo);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+    this.count = ii;
+  }
+
+  draw({ k, x, y, dpr, w, h }, passes) {
+    const gl = this.gl;
+    gl.viewport(0, 0, w, h);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    if (!this.count) return;
+    gl.useProgram(this.prog);
+    gl.bindVertexArray(this.vao);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.uniform3f(this.u.u_view, k, x, y);
+    gl.uniform2f(this.u.u_size, w / dpr, h / dpr);
+    gl.uniform1f(this.u.u_dpr, dpr);
+    for (const d of passes) {
+      const [r, g, b] = rgb(d.color);
+      gl.uniform1f(this.u.u_hw, d.width / 2);
+      gl.uniform1f(this.u.u_offset, d.offset);
+      gl.uniform1f(this.u.u_period, d.period);
+      gl.uniform1f(this.u.u_on, d.on);
+      gl.uniform4f(this.u.u_color, r, g, b, d.alpha);
+      gl.drawElements(gl.TRIANGLES, this.count, gl.UNSIGNED_INT, 0);
+    }
+    gl.bindVertexArray(null);
+  }
+}
+
+const WATER_VS = `#version 300 es
+in vec2 a_pos; in vec2 a_nrm; in float a_s; in float a_side;
+uniform vec3 u_view; uniform vec2 u_size; uniform float u_hw; uniform float u_dpr;
+out float v_s; out float v_across;
+void main() {
+  float k = u_view.x;
+  // at least half a device pixel wide, plus a pixel to fade the edge into
+  float hw = max(u_hw, 0.5 / (k * u_dpr)) + 1.0 / (k * u_dpr);
+  vec2 p = a_pos + a_nrm * a_side * hw;
+  vec2 css = p * k + u_view.yz;
+  gl_Position = vec4(css.x / u_size.x * 2.0 - 1.0, 1.0 - css.y / u_size.y * 2.0, 0.0, 1.0);
+  v_s = a_s;
+  v_across = a_side * hw;
+}`;
+
+const WATER_FS = `#version 300 es
+precision highp float;
+in float v_s; in float v_across;
+uniform vec3 u_view; uniform float u_hw; uniform float u_dpr;
+uniform float u_offset; uniform float u_period; uniform float u_on; uniform vec4 u_color;
+out vec4 o;
+void main() {
+  float px = 1.0 / (u_view.x * u_dpr);      // a device pixel, in diagram units
+  float hw = max(u_hw, 0.5 * px);           // thinner than a pixel: wider but fainter
+  float faint = u_hw / hw;
+  float u = mod(v_s + u_offset, u_period);  // where in the dash pattern
+  float along = u <= u_on ? 0.0 : min(u - u_on, u_period - u);
+  float d = length(vec2(along, v_across)) - hw; // round ends
+  float a = clamp(0.5 - d / px, 0.0, 1.0) * faint * u_color.a;
+  o = vec4(u_color.rgb * a, a);
+}`;
+
+// "#38bdf8" → [r, g, b] in 0..1
+function rgb(hex) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
